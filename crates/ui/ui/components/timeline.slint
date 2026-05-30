@@ -1,0 +1,117 @@
+import { Palette } from "../styles/palette.slint";
+import { Theme } from "../styles/theme.slint";
+import { ClipBlock, ClipData } from "clip-card.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export component Timeline inherits Rectangle {
+    in property <[ClipData]> clips;
+    in property <string> selected-id;
+    in property <length> px-per-sec: 6px;
+    in property <float> playhead-fraction: 0.0;
+
+    callback clip-clicked(string);
+    callback remove-clicked(string);
+    callback move-up-clicked(int);
+    callback move-down-clicked(int);
+    callback seek-fraction(float);
+
+    background: Palette.background;
+
+    VerticalLayout {
+        padding: Theme.spacing-md;
+        spacing: Theme.spacing-sm;
+        alignment: start;
+
+        HorizontalLayout {
+            spacing: Theme.spacing-md;
+            alignment: space-between;
+            Text {
+                text: "TIMELINE";
+                color: Palette.text-muted;
+                font-size: Theme.font-xs;
+                letter-spacing: 1.5px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.clips.length == 0
+                    ? "Empty"
+                    : root.clips.length + " clips · click to seek · Space to play";
+                color: Palette.text-dim;
+                font-size: Theme.font-xs;
+                vertical-alignment: center;
+            }
+        }
+
+        // Lane container
+        Rectangle {
+            height: 128px;
+            border-radius: Theme.radius;
+            background: Palette.surface;
+            border-width: 1px;
+            border-color: Palette.border;
+            clip: true;
+
+            // Empty state
+            if root.clips.length == 0 : VerticalLayout {
+                alignment: center;
+                spacing: Theme.spacing-xs;
+                Text {
+                    text: "No clips yet";
+                    color: Palette.text-muted;
+                    font-size: Theme.font-md;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Click  +  Add Clips  in the sidebar to begin";
+                    color: Palette.text-dim;
+                    font-size: Theme.font-xs;
+                    horizontal-alignment: center;
+                }
+            }
+
+            // Scrollable clips
+            if root.clips.length > 0 : ScrollView {
+                viewport-height: self.visible-height;
+                Rectangle {
+                    HorizontalLayout {
+                        padding: Theme.spacing-sm;
+                        spacing: 1px;
+                        alignment: start;
+                        for clip[idx] in root.clips: ClipBlock {
+                            data: clip;
+                            index: idx;
+                            px-per-sec: root.px-per-sec;
+                            selected: clip.id == root.selected-id;
+                            clip-clicked(id)      => { root.clip-clicked(id); }
+                            remove-clicked(id)    => { root.remove-clicked(id); }
+                            move-up-clicked(i)    => { root.move-up-clicked(i); }
+                            move-down-clicked(i)  => { root.move-down-clicked(i); }
+                        }
+                    }
+
+                    // Seek overlay — click anywhere on the lane to seek to that fraction
+                    // of the currently selected clip's duration.
+                    seek-area := TouchArea {
+                        clicked => {
+                            if (self.width > 0px) {
+                                root.seek-fraction(self.pressed-x / self.width);
+                            }
+                        }
+                    }
+
+                    // Playhead line (only shown when something is selected)
+                    Rectangle {
+                        visible: root.selected-id != "";
+                        x: root.playhead-fraction * parent.width;
+                        y: 0;
+                        width: 1px;
+                        height: parent.height;
+                        background: Palette.accent-2;
+                    }
+                }
+            }
+        }
+    }
+}

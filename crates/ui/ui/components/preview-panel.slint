@@ -1,0 +1,131 @@
+import { Palette } from "../styles/palette.slint";
+import { Theme } from "../styles/theme.slint";
+
+component PlayButton inherits Rectangle {
+    in property <bool> playing;
+    in property <bool> enabled-state: true;
+    callback clicked();
+    width: 28px; height: 28px;
+    border-radius: 14px;
+    opacity: root.enabled-state ? 1.0 : 0.4;
+    background: ta.has-hover && root.enabled-state ? Palette.accent-2 : Palette.accent;
+    animate background { duration: 120ms; }
+    animate opacity { duration: 120ms; }
+
+    ta := TouchArea {
+        enabled: root.enabled-state;
+        clicked => { root.clicked(); }
+    }
+    Text {
+        text: root.playing ? "‖" : "▶";
+        color: white;
+        font-size: 11px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+export component PreviewPanel inherits Rectangle {
+    in property <bool> has-selection;
+    in property <string> selected-name;
+    in property <string> selected-resolution;
+    in property <string> selected-duration;
+    in property <string> playhead-text: "00:00";
+    in property <image> frame;
+    in property <bool> playing;
+
+    callback play-toggle();
+
+    background: Palette.surface;
+    border-radius: Theme.radius-lg;
+    border-width: 1px;
+    border-color: Palette.border;
+    clip: true;
+
+    VerticalLayout {
+        spacing: 0px;
+
+        // Screen area
+        Rectangle {
+            background: #000000;
+            vertical-stretch: 1;
+            clip: true;
+
+            // Live frame (visible only when selection has produced a frame)
+            Image {
+                visible: root.has-selection;
+                source: root.frame;
+                image-fit: contain;
+                width: 100%;
+                height: 100%;
+            }
+
+            // Empty state
+            if !root.has-selection : VerticalLayout {
+                alignment: center;
+                spacing: Theme.spacing-sm;
+                Rectangle {
+                    width: 56px; height: 56px;
+                    border-radius: 28px;
+                    background: Palette.surface-2;
+                    horizontal-stretch: 0;
+                    Text {
+                        text: "▶";
+                        color: Palette.text-dim;
+                        font-size: 24px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                Text {
+                    text: "Select a clip to preview";
+                    color: Palette.text-dim;
+                    font-size: Theme.font-md;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Press  Space  to play once loaded";
+                    color: Palette.text-dim;
+                    font-size: Theme.font-xs;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+
+        // Player chrome bar
+        Rectangle {
+            height: 44px;
+            background: Palette.surface-2;
+            HorizontalLayout {
+                padding-left: Theme.spacing-md;
+                padding-right: Theme.spacing-md;
+                spacing: Theme.spacing-md;
+                alignment: space-between;
+
+                HorizontalLayout {
+                    spacing: Theme.spacing-md;
+                    alignment: start;
+                    PlayButton {
+                        playing: root.playing;
+                        enabled-state: root.has-selection;
+                        clicked => { root.play-toggle(); }
+                    }
+                    Text {
+                        text: root.playhead-text + "  /  " + (root.has-selection ? root.selected-duration : "00:00");
+                        color: Palette.text;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                        font-weight: 500;
+                    }
+                }
+
+                Text {
+                    text: root.has-selection ? root.selected-resolution : "—";
+                    color: Palette.text-muted;
+                    font-size: Theme.font-sm;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

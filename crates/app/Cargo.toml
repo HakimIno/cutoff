@@ -1,0 +1,27 @@
+[package]
+name = "video-merger-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "video-merger"
+path = "src/main.rs"
+
+[dependencies]
+video-merger-core.workspace = true
+video-merger-engine.workspace = true
+video-merger-worker.workspace = true
+video-merger-persistence.workspace = true
+video-merger-ui.workspace = true
+
+slint.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+rfd = "0.15"
+image.workspace = true

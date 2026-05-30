@@ -1,0 +1,71 @@
+import { Palette } from "../styles/palette.slint";
+import { Theme } from "../styles/theme.slint";
+
+export component Header inherits Rectangle {
+    in property <string> subtitle: "PRO";
+    height: 44px;
+    background: Palette.surface;
+
+    Rectangle {
+        x: 0; y: parent.height - 1px;
+        width: 100%; height: 1px;
+        background: Palette.border;
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.spacing-lg;
+        padding-right: Theme.spacing-lg;
+        spacing: Theme.spacing-sm;
+        alignment: start;
+
+        // Brand mark
+        Rectangle {
+            width: 24px; height: 24px;
+            border-radius: Theme.radius-sm;
+            background: Palette.accent;
+            y: (parent.height - self.height) / 2;
+            Text {
+                text: "▶";
+                color: white;
+                font-size: 11px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: Theme.spacing-md;
+            y: (parent.height - self.height) / 2;
+            Text {
+                text: "4K Video Merger";
+                color: Palette.text;
+                font-size: Theme.font-md;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            // Subtitle badge
+            Rectangle {
+                background: Palette.surface-3;
+                border-radius: Theme.radius-sm;
+                border-width: 1px;
+                border-color: Palette.border;
+                y: (parent.height - self.height) / 2;
+                HorizontalLayout {
+                    padding-left: 6px;
+                    padding-right: 6px;
+                    padding-top: 1px;
+                    padding-bottom: 1px;
+                    Text {
+                        text: root.subtitle;
+                        color: Palette.accent-2;
+                        font-size: Theme.font-xs;
+                        letter-spacing: 0.5px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,32 @@
+import { Palette } from "../styles/palette.slint";
+import { Theme } from "../styles/theme.slint";
+
+export component FileDropper inherits Rectangle {
+    callback browse-clicked();
+    height: 140px;
+    border-radius: Theme.radius;
+    border-width: 2px;
+    border-color: Palette.border;
+    background: Palette.surface-2;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: Theme.spacing-sm;
+        Text {
+            text: "Drop video files here";
+            horizontal-alignment: center;
+            color: Palette.text;
+            font-size: Theme.font-md;
+        }
+        Text {
+            text: "or click to browse";
+            horizontal-alignment: center;
+            color: Palette.text-muted;
+            font-size: Theme.font-sm;
+        }
+    }
+
+    TouchArea {
+        clicked => { root.browse-clicked(); }
+    }
+}

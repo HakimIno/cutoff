@@ -1,0 +1,110 @@
+import { Palette } from "../styles/palette.slint";
+import { Theme } from "../styles/theme.slint";
+import { ProgressBar } from "progress-bar.slint";
+
+component ActionButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    in property <bool> enabled-state: true;
+    callback clicked();
+    width: 110px;
+    height: 30px;
+    border-radius: Theme.radius;
+    opacity: enabled-state ? 1.0 : 0.35;
+    background:
+        !enabled-state ? Palette.surface-3 :
+        danger         ? (ta.has-hover ? #f06669 : Palette.danger) :
+        primary        ? (ta.has-hover ? Palette.accent-2 : Palette.accent)
+                       : (ta.has-hover ? Palette.surface-3 : Palette.surface-2);
+    border-width: primary || danger ? 0px : 1px;
+    border-color: Palette.border;
+    animate background { duration: 120ms; }
+    animate opacity { duration: 120ms; }
+
+    ta := TouchArea {
+        enabled: root.enabled-state;
+        clicked => { root.clicked(); }
+    }
+    Text {
+        text: root.label;
+        color: primary || danger ? white : Palette.text;
+        font-size: Theme.font-sm;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+export component StatusFooter inherits Rectangle {
+    in property <string> status-text;
+    in property <float> progress;
+    in property <bool> exporting;
+    in property <bool> can-export;
+
+    callback export-clicked();
+    callback cancel-clicked();
+
+    height: 74px;
+    background: Palette.surface;
+
+    Rectangle {
+        x: 0; y: 0;
+        width: 100%; height: 1px;
+        background: Palette.border;
+    }
+
+    VerticalLayout {
+        padding-left: Theme.spacing-lg;
+        padding-right: Theme.spacing-lg;
+        padding-top: Theme.spacing-md;
+        padding-bottom: Theme.spacing-md;
+        spacing: Theme.spacing-sm;
+
+        HorizontalLayout {
+            spacing: Theme.spacing-md;
+            alignment: space-between;
+
+            // Status text on the left
+            HorizontalLayout {
+                spacing: Theme.spacing-sm;
+                alignment: start;
+                horizontal-stretch: 1;
+                Rectangle {
+                    width: 8px; height: 8px;
+                    border-radius: 4px;
+                    y: (parent.height - self.height) / 2;
+                    background: root.exporting ? Palette.warning : Palette.success;
+                }
+                Text {
+                    text: root.status-text == "" ? "Ready" : root.status-text;
+                    color: Palette.text;
+                    font-size: Theme.font-sm;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+            }
+
+            // Action buttons
+            HorizontalLayout {
+                spacing: Theme.spacing-sm;
+                alignment: end;
+                ActionButton {
+                    label: "▶  Export";
+                    primary: true;
+                    enabled-state: root.can-export && !root.exporting;
+                    clicked => { root.export-clicked(); }
+                }
+                ActionButton {
+                    label: "Cancel";
+                    danger: root.exporting;
+                    enabled-state: root.exporting;
+                    clicked => { root.cancel-clicked(); }
+                }
+            }
+        }
+
+        ProgressBar { fraction: root.progress; }
+    }
+}

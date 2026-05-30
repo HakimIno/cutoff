@@ -1,0 +1,18 @@
+import { Palette } from "../styles/palette.slint";
+import { Theme } from "../styles/theme.slint";
+
+export component ProgressBar inherits Rectangle {
+    in property <float> fraction;
+    height: 6px;
+    border-radius: 3px;
+    background: Palette.surface-2;
+
+    Rectangle {
+        x: 0; y: 0;
+        height: parent.height;
+        width: parent.width * max(0.0, min(1.0, root.fraction));
+        background: Palette.accent;
+        border-radius: 3px;
+        animate width { duration: 200ms; }
+    }
+}

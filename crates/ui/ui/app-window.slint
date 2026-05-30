@@ -1,0 +1,153 @@
+import { Palette } from "styles/palette.slint";
+import { Theme } from "styles/theme.slint";
+import { Header } from "components/header.slint";
+import { Sidebar } from "components/sidebar.slint";
+import { PreviewPanel } from "components/preview-panel.slint";
+import { DetailsPanel } from "components/details-panel.slint";
+import { Timeline } from "components/timeline.slint";
+import { StatusFooter } from "components/status-footer.slint";
+import { ClipData } from "components/clip-card.slint";
+
+export component AppWindow inherits Window {
+    title: "cutoff — Pro Video Editor";
+    preferred-width: 1320px;
+    preferred-height: 820px;
+    min-width: 1000px;
+    min-height: 640px;
+    background: Palette.background;
+
+    // Timeline state
+    in property <[ClipData]> clips;
+    in property <string> selected-id;
+    in property <bool> has-selection;
+
+    // Selected clip details
+    in property <string> selected-name;
+    in property <string> selected-codec;
+    in property <string> selected-resolution;
+    in property <string> selected-duration;
+    in property <string> selected-fps;
+
+    // Aggregate stats
+    in property <int> clip-count;
+    in property <string> total-duration;
+    in property <string> merge-strategy;
+    in property <string> quality-label: "Lossless";
+
+    // Export status
+    in property <float> export-progress;
+    in property <string> status-text;
+    in property <bool> exporting;
+    in property <bool> can-export;
+
+    // Preview / playback
+    in property <image> preview-frame;
+    in property <bool> playing;
+    in property <string> playhead-text: "00:00";
+    in property <float> playhead-fraction: 0.0;
+
+    // Callbacks
+    callback browse-clicked();
+    callback export-clicked();
+    callback cancel-clicked();
+    callback clip-selected(string);
+    callback remove-clicked(string);
+    callback move-up-clicked(int);
+    callback move-down-clicked(int);
+    callback play-toggle();
+    callback seek-fraction(float);
+
+    forward-focus: key-handler;
+
+    key-handler := FocusScope {
+        key-pressed(event) => {
+            if (event.text == " ") {
+                root.play-toggle();
+                return accept;
+            }
+            return reject;
+        }
+
+        VerticalLayout {
+            spacing: 0px;
+
+            Header {}
+
+            HorizontalLayout {
+                spacing: 0px;
+                vertical-stretch: 1;
+
+                Sidebar {
+                    clip-count: root.clip-count;
+                    total-duration: root.total-duration;
+                    merge-strategy: root.merge-strategy;
+                    quality-label: root.quality-label;
+                    add-clicked => { root.browse-clicked(); }
+                }
+
+                // Main center column
+                VerticalLayout {
+                    spacing: 0px;
+                    horizontal-stretch: 1;
+
+                    // Preview area
+                    Rectangle {
+                        vertical-stretch: 1;
+                        HorizontalLayout {
+                            padding: Theme.spacing-lg;
+                            PreviewPanel {
+                                has-selection: root.has-selection;
+                                selected-name: root.selected-name;
+                                selected-resolution: root.selected-resolution;
+                                selected-duration: root.selected-duration;
+                                playhead-text: root.playhead-text;
+                                frame: root.preview-frame;
+                                playing: root.playing;
+                                play-toggle => { root.play-toggle(); }
+                            }
+                        }
+                    }
+
+                    // Timeline lane
+                    Rectangle {
+                        height: 196px;
+                        background: Palette.surface;
+                        Rectangle {
+                            x: 0; y: 0;
+                            width: 100%; height: 1px;
+                            background: Palette.border;
+                        }
+                        Timeline {
+                            clips: root.clips;
+                            selected-id: root.selected-id;
+                            playhead-fraction: root.playhead-fraction;
+                            clip-clicked(id) => { root.clip-selected(id); }
+                            remove-clicked(id) => { root.remove-clicked(id); }
+                            move-up-clicked(i) => { root.move-up-clicked(i); }
+                            move-down-clicked(i) => { root.move-down-clicked(i); }
+                            seek-fraction(f) => { root.seek-fraction(f); }
+                        }
+                    }
+                }
+
+                DetailsPanel {
+                    has-selection: root.has-selection;
+                    selected-name: root.selected-name;
+                    selected-codec: root.selected-codec;
+                    selected-resolution: root.selected-resolution;
+                    selected-duration: root.selected-duration;
+                    selected-fps: root.selected-fps;
+                }
+            }
+
+            StatusFooter {
+                status-text: root.status-text;
+                progress: root.export-progress;
+                exporting: root.exporting;
+                can-export: root.can-export;
+                export-clicked => { root.export-clicked(); }
+                cancel-clicked => { root.cancel-clicked(); }
+            }
+        }
+    }
+}

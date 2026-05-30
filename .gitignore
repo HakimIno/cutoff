@@ -1,0 +1,25 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime artifacts
+*.log
+/tmp
+/.cache
+
+# Local configuration overrides
+.env
+.env.local
+
+# Antigravity CLI
+.antigravitycli/
+

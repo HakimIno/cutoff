@@ -1,0 +1,154 @@
+import { Palette } from "../styles/palette.slint";
+import { Theme } from "../styles/theme.slint";
+
+export struct ClipData {
+    id: string,
+    name: string,
+    duration: string,
+    resolution: string,
+    duration-secs: float,
+    thumbnails: [image],
+}
+
+component IconAction inherits Rectangle {
+    in property <string> label;
+    in property <bool> dim: false;
+    in property <color> hover-color: Palette.accent;
+    callback clicked();
+    width: 20px; height: 20px;
+    border-radius: Theme.radius-sm;
+    background: ta.has-hover ? hover-color : Palette.surface-3;
+    opacity: dim && !ta.has-hover ? 0.6 : 1.0;
+    animate background { duration: 100ms; }
+    animate opacity { duration: 100ms; }
+
+    ta := TouchArea { clicked => { root.clicked(); } }
+    Text {
+        text: root.label;
+        color: Palette.text;
+        font-size: Theme.font-sm;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+export component ClipBlock inherits Rectangle {
+    in property <ClipData> data;
+    in property <int> index;
+    in property <bool> selected;
+    in property <length> px-per-sec: 6px;
+
+    callback clip-clicked(string);
+    callback remove-clicked(string);
+    callback move-up-clicked(int);
+    callback move-down-clicked(int);
+
+    // Width scales with duration; clamped so very short clips stay grabbable
+    // and very long ones don't break layout in early phases.
+    width: max(min(self.px-per-sec * root.data.duration-secs, 800px), 120px);
+    height: 104px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: root.selected ? Palette.accent : (outer.has-hover ? Palette.border-bright : Palette.border);
+    background: root.selected
+        ? Palette.accent-glow
+        : (outer.has-hover ? Palette.surface-3 : Palette.surface-2);
+    clip: true;
+    animate background { duration: 120ms; }
+    animate border-color { duration: 120ms; }
+
+    outer := TouchArea {
+        clicked => { root.clip-clicked(root.data.id); }
+    }
+
+    // Glow accent stripe for selected
+    if root.selected : Rectangle {
+        x: 0; y: 0;
+        width: 3px; height: 100%;
+        background: Palette.accent;
+        border-radius: 1px;
+    }
+
+    // Filmstrip background (thumbnails laid across the card)
+    Rectangle {
+        x: 0;
+        y: 22px;
+        width: parent.width;
+        height: 58px;
+        clip: true;
+        background: #000000;
+
+        HorizontalLayout {
+            spacing: 0px;
+            alignment: start;
+            for thumb[i] in root.data.thumbnails: Image {
+                source: thumb;
+                width: parent.width / max(root.data.thumbnails.length, 1);
+                height: 58px;
+                image-fit: cover;
+            }
+        }
+    }
+
+    VerticalLayout {
+        padding-left: Theme.spacing-sm;
+        padding-right: Theme.spacing-sm;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        spacing: 0px;
+        alignment: space-between;
+
+        // Top row: index badge + name
+        HorizontalLayout {
+            spacing: Theme.spacing-sm;
+            alignment: start;
+            Rectangle {
+                width: 18px; height: 16px;
+                border-radius: Theme.radius-sm;
+                background: root.selected ? Palette.accent : Palette.surface-3;
+                Text {
+                    text: root.index + 1;
+                    color: Palette.text;
+                    font-size: Theme.font-xs;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+            Text {
+                text: root.data.name;
+                color: Palette.text;
+                font-size: Theme.font-xs;
+                font-weight: 600;
+                vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+        }
+
+        // Spacer reserved for filmstrip
+        Rectangle { vertical-stretch: 1; }
+
+        // Bottom row: duration + delete only (reorder moves to Phase 3 drag-drop)
+        HorizontalLayout {
+            spacing: Theme.spacing-xs;
+            alignment: space-between;
+
+            Text {
+                text: root.data.duration;
+                color: Palette.text-muted;
+                font-size: Theme.font-xs;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            IconAction {
+                label: "×";
+                dim: !outer.has-hover && !root.selected;
+                hover-color: Palette.danger;
+                clicked => { root.remove-clicked(root.data.id); }
+            }
+        }
+    }
+}
