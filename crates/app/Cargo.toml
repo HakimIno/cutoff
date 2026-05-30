@@ -17,6 +17,7 @@ video-merger-persistence.workspace = true
 video-merger-ui.workspace = true
 
 slint.workspace = true
+i-slint-backend-winit = "1.16"
 tokio.workspace = true
 tokio-util.workspace = true
 anyhow.workspace = true

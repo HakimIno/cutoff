@@ -1,6 +1,7 @@
 //! Composition root. Wires the UI, worker, and engine together.
 
 mod bridge;
+mod drop_handler;
 mod view_model;
 
 use std::collections::HashMap;
@@ -8,7 +9,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use slint::{ComponentHandle, ModelRc, VecModel};
 use tracing_subscriber::EnvFilter;
 use video_merger_core::domain::Playlist;
@@ -18,6 +19,7 @@ use video_merger_ui::{AppWindow, ClipData};
 use video_merger_worker::WorkerHandle;
 
 use bridge::BridgeState;
+use drop_handler::FileDropHandler;
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -49,6 +51,17 @@ fn main() -> Result<()> {
     });
     let worker = WorkerHandle::spawn(engine);
 
+    // Install custom winit backend that forwards Finder file drops to the
+    // worker BEFORE creating the AppWindow (set_platform is a one-shot).
+    let backend = i_slint_backend_winit::Backend::builder()
+        .with_custom_application_handler(Box::new(FileDropHandler {
+            cmd_tx: worker.cmd_tx.clone(),
+        }))
+        .build()
+        .map_err(|e| anyhow!("winit backend build: {e}"))?;
+    slint::platform::set_platform(Box::new(backend))
+        .map_err(|e| anyhow!("set_platform: {e:?}"))?;
+
     let window = AppWindow::new()?;
 
     let clips_model: Rc<VecModel<ClipData>> = Rc::new(VecModel::default());
@@ -66,7 +79,10 @@ fn main() -> Result<()> {
         history: Arc::new(Mutex::new(history)),
         storage,
         preview: Arc::new(Mutex::new(Default::default())),
+        zoom: Arc::new(Mutex::new(bridge::ZOOM_DEFAULT)),
     };
+
+    window.set_px_per_sec(bridge::ZOOM_DEFAULT);
 
     bridge::install(&window, worker, state);
 

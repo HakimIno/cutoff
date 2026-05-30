@@ -1,19 +1,35 @@
 import { Palette } from "../styles/palette.slint";
 import { Theme } from "../styles/theme.slint";
 import { ClipBlock, ClipData } from "clip-card.slint";
+import { DropIndicator } from "drop-indicator.slint";
 import { ScrollView } from "std-widgets.slint";
+
+export struct RulerTick {
+    x: length,
+    label: string,
+    major: bool,
+}
 
 export component Timeline inherits Rectangle {
     in property <[ClipData]> clips;
+    in property <[RulerTick]> ruler-ticks;
     in property <string> selected-id;
     in property <length> px-per-sec: 6px;
+    in property <length> total-width: 0px;
     in property <float> playhead-fraction: 0.0;
+
+    // Drag state (driven by bridge / app-window).
+    in property <int> drag-from-index: -1;
+    in property <int> drop-target-index: -1;
+    // x-position of the drop indicator within the lane, in px from lane left.
+    in property <length> drop-indicator-x: 0px;
 
     callback clip-clicked(string);
     callback remove-clicked(string);
-    callback move-up-clicked(int);
-    callback move-down-clicked(int);
     callback seek-fraction(float);
+    callback drag-started(int);
+    callback drag-moved(int, length);
+    callback drag-released(int, length);
 
     background: Palette.background;
 
@@ -35,24 +51,23 @@ export component Timeline inherits Rectangle {
             }
             Text {
                 text: root.clips.length == 0
-                    ? "Empty"
-                    : root.clips.length + " clips · click to seek · Space to play";
+                    ? "Empty · drop video files here"
+                    : root.clips.length + " clips · drag to reorder · Space play";
                 color: Palette.text-dim;
                 font-size: Theme.font-xs;
                 vertical-alignment: center;
             }
         }
 
-        // Lane container
+        // Lane container (ruler + lane scroll together)
         Rectangle {
-            height: 128px;
+            height: 152px;
             border-radius: Theme.radius;
             background: Palette.surface;
             border-width: 1px;
             border-color: Palette.border;
             clip: true;
 
-            // Empty state
             if root.clips.length == 0 : VerticalLayout {
                 alignment: center;
                 spacing: Theme.spacing-xs;
@@ -64,51 +79,118 @@ export component Timeline inherits Rectangle {
                     horizontal-alignment: center;
                 }
                 Text {
-                    text: "Click  +  Add Clips  in the sidebar to begin";
+                    text: "Click  +  Add Clips  or drop a video onto the window";
                     color: Palette.text-dim;
                     font-size: Theme.font-xs;
                     horizontal-alignment: center;
                 }
             }
 
-            // Scrollable clips
             if root.clips.length > 0 : ScrollView {
                 viewport-height: self.visible-height;
-                Rectangle {
-                    HorizontalLayout {
-                        padding: Theme.spacing-sm;
-                        spacing: 1px;
-                        alignment: start;
-                        for clip[idx] in root.clips: ClipBlock {
-                            data: clip;
-                            index: idx;
-                            px-per-sec: root.px-per-sec;
-                            selected: clip.id == root.selected-id;
-                            clip-clicked(id)      => { root.clip-clicked(id); }
-                            remove-clicked(id)    => { root.remove-clicked(id); }
-                            move-up-clicked(i)    => { root.move-up-clicked(i); }
-                            move-down-clicked(i)  => { root.move-down-clicked(i); }
-                        }
-                    }
+                viewport-width: max(root.total-width + 12px, self.visible-width);
 
-                    // Seek overlay — click anywhere on the lane to seek to that fraction
-                    // of the currently selected clip's duration.
-                    seek-area := TouchArea {
-                        clicked => {
-                            if (self.width > 0px) {
-                                root.seek-fraction(self.pressed-x / self.width);
+                Rectangle {
+                    width: max(root.total-width + 12px, parent.width);
+                    height: 150px;
+
+                    // Ruler strip (24px tall, top of lane) — click to seek.
+                    Rectangle {
+                        x: 0;
+                        y: 0;
+                        width: parent.width;
+                        height: 24px;
+                        background: Palette.surface-2;
+
+                        Rectangle {
+                            x: 0;
+                            y: parent.height - 1px;
+                            width: parent.width;
+                            height: 1px;
+                            background: Palette.border;
+                        }
+
+                        for tick in root.ruler-ticks: Rectangle {
+                            x: tick.x;
+                            y: tick.major ? 12px : 17px;
+                            width: 1px;
+                            height: tick.major ? 12px : 7px;
+                            background: tick.major ? Palette.text-muted : Palette.text-dim;
+                        }
+
+                        for tick in root.ruler-ticks: Text {
+                            visible: tick.major;
+                            x: tick.x + 3px;
+                            y: 2px;
+                            text: tick.label;
+                            color: Palette.text-muted;
+                            font-size: Theme.font-xs;
+                            font-weight: 500;
+                        }
+
+                        ruler-scrub := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                if (self.width > 0px) {
+                                    root.seek-fraction(self.pressed-x / self.width);
+                                }
                             }
                         }
                     }
 
-                    // Playhead line (only shown when something is selected)
+                    // Lane body — cards arranged horizontally
                     Rectangle {
-                        visible: root.selected-id != "";
+                        x: 0;
+                        y: 24px;
+                        width: parent.width;
+                        height: parent.height - 24px;
+
+                        HorizontalLayout {
+                            padding-left: Theme.spacing-xs;
+                            padding-right: Theme.spacing-xs;
+                            padding-top: Theme.spacing-xs;
+                            padding-bottom: Theme.spacing-xs;
+                            spacing: 1px;
+                            alignment: start;
+                            for clip[idx] in root.clips: ClipBlock {
+                                data: clip;
+                                index: idx;
+                                px-per-sec: root.px-per-sec;
+                                selected: clip.id == root.selected-id;
+                                drag-ghost: root.drag-from-index == idx;
+                                clip-clicked(id) => { root.clip-clicked(id); }
+                                remove-clicked(id) => { root.remove-clicked(id); }
+                                drag-started(i) => { root.drag-started(i); }
+                                drag-moved(i, dx) => { root.drag-moved(i, dx); }
+                                drag-released(i, dx) => { root.drag-released(i, dx); }
+                            }
+                        }
+
+                        // Drop indicator
+                        if root.drop-target-index >= 0 : DropIndicator {
+                            x: root.drop-indicator-x;
+                            y: 2px;
+                            height: parent.height - 4px;
+                        }
+                    }
+
+                    // Playhead spans ruler+lane height
+                    Rectangle {
+                        visible: root.selected-id != "" && root.total-width > 0px;
                         x: root.playhead-fraction * parent.width;
                         y: 0;
                         width: 1px;
                         height: parent.height;
                         background: Palette.accent-2;
+                    }
+                    Rectangle {
+                        visible: root.selected-id != "" && root.total-width > 0px;
+                        x: root.playhead-fraction * parent.width - 3px;
+                        y: 0;
+                        width: 7px;
+                        height: 5px;
+                        background: Palette.accent-2;
+                        border-radius: 1px;
                     }
                 }
             }

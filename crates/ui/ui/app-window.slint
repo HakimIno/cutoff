@@ -4,9 +4,11 @@ import { Header } from "components/header.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { PreviewPanel } from "components/preview-panel.slint";
 import { DetailsPanel } from "components/details-panel.slint";
-import { Timeline } from "components/timeline.slint";
+import { Timeline, RulerTick } from "components/timeline.slint";
 import { StatusFooter } from "components/status-footer.slint";
 import { ClipData } from "components/clip-card.slint";
+
+export { RulerTick }
 
 export component AppWindow inherits Window {
     title: "cutoff — Pro Video Editor";
@@ -46,16 +48,31 @@ export component AppWindow inherits Window {
     in property <string> playhead-text: "00:00";
     in property <float> playhead-fraction: 0.0;
 
+    // Ruler + zoom
+    in property <[RulerTick]> ruler-ticks;
+    in property <length> px-per-sec: 6px;
+    in property <length> timeline-total-width: 0px;
+
+    // Drag-and-drop reorder state
+    in property <int> drag-from-index: -1;
+    in property <int> drop-target-index: -1;
+    in property <length> drop-indicator-x: 0px;
+
     // Callbacks
     callback browse-clicked();
     callback export-clicked();
     callback cancel-clicked();
     callback clip-selected(string);
     callback remove-clicked(string);
-    callback move-up-clicked(int);
-    callback move-down-clicked(int);
     callback play-toggle();
     callback seek-fraction(float);
+    callback zoom-in();
+    callback zoom-out();
+    callback jump-start();
+    callback jump-end();
+    callback drag-started(int);
+    callback drag-moved(int, length);
+    callback drag-released(int, length);
 
     forward-focus: key-handler;
 
@@ -63,6 +80,22 @@ export component AppWindow inherits Window {
         key-pressed(event) => {
             if (event.text == " ") {
                 root.play-toggle();
+                return accept;
+            }
+            if (event.text == "+" || event.text == "=") {
+                root.zoom-in();
+                return accept;
+            }
+            if (event.text == "-" || event.text == "_") {
+                root.zoom-out();
+                return accept;
+            }
+            if (event.text == Key.Home) {
+                root.jump-start();
+                return accept;
+            }
+            if (event.text == Key.End) {
+                root.jump-end();
                 return accept;
             }
             return reject;
@@ -110,7 +143,7 @@ export component AppWindow inherits Window {
 
                     // Timeline lane
                     Rectangle {
-                        height: 196px;
+                        height: 220px;
                         background: Palette.surface;
                         Rectangle {
                             x: 0; y: 0;
@@ -119,13 +152,20 @@ export component AppWindow inherits Window {
                         }
                         Timeline {
                             clips: root.clips;
+                            ruler-ticks: root.ruler-ticks;
                             selected-id: root.selected-id;
+                            px-per-sec: root.px-per-sec;
+                            total-width: root.timeline-total-width;
                             playhead-fraction: root.playhead-fraction;
+                            drag-from-index: root.drag-from-index;
+                            drop-target-index: root.drop-target-index;
+                            drop-indicator-x: root.drop-indicator-x;
                             clip-clicked(id) => { root.clip-selected(id); }
                             remove-clicked(id) => { root.remove-clicked(id); }
-                            move-up-clicked(i) => { root.move-up-clicked(i); }
-                            move-down-clicked(i) => { root.move-down-clicked(i); }
                             seek-fraction(f) => { root.seek-fraction(f); }
+                            drag-started(i) => { root.drag-started(i); }
+                            drag-moved(i, dx) => { root.drag-moved(i, dx); }
+                            drag-released(i, dx) => { root.drag-released(i, dx); }
                         }
                     }
                 }

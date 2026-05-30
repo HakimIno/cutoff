@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 use video_merger_engine::{decoder, EngineError, MergeEngine, ProgressEvent};
 
 use crate::job::{Command, Event, JobId};
-use crate::preview::{spawn_preview, PreviewCtrl, PreviewHandle};
+use crate::preview::{spawn_preview, PreviewBounds, PreviewCtrl, PreviewHandle};
 use crate::progress;
 
 pub struct Dispatcher {
@@ -76,10 +76,23 @@ impl Dispatcher {
                         token.cancel();
                     }
                 }
-                Command::OpenPreview { clip_id, path } => {
+                Command::OpenPreview {
+                    clip_id,
+                    path,
+                    trim_in_us,
+                    trim_out_us,
+                } => {
                     // Drop prior handle → its receiver disconnects → thread exits.
                     self.preview = None;
-                    self.preview = Some(spawn_preview(clip_id, path, self.event_tx.clone()));
+                    self.preview = Some(spawn_preview(
+                        clip_id,
+                        path,
+                        PreviewBounds {
+                            trim_in_us,
+                            trim_out_us,
+                        },
+                        self.event_tx.clone(),
+                    ));
                 }
                 Command::PlayPreview => {
                     if let Some(h) = &self.preview {

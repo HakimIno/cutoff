@@ -25,15 +25,18 @@ pub async fn run(
     result
 }
 
-async fn write_concat_list(inputs: &[PathBuf]) -> EngineResult<PathBuf> {
+async fn write_concat_list(inputs: &[video_merger_core::services::MergeInput]) -> EngineResult<PathBuf> {
     let path = std::env::temp_dir().join(format!("video-merger-concat-{}.txt", uuid::Uuid::new_v4()));
     let mut contents = String::new();
     for input in inputs {
         // The concat demuxer treats single quotes as delimiters; escape them.
-        let escaped = input.to_string_lossy().replace('\'', r"'\''");
+        let escaped = input.path.to_string_lossy().replace('\'', r"'\''");
         contents.push_str("file '");
         contents.push_str(&escaped);
         contents.push_str("'\n");
+        // StreamCopy is only chosen when no clip is trimmed, so we don't emit
+        // inpoint/outpoint directives here (they're keyframe-snapped and
+        // unreliable for lossless export).
     }
     tokio::fs::write(&path, contents).await?;
     Ok(path)

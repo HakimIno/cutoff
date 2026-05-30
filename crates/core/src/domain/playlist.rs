@@ -47,6 +47,15 @@ impl Playlist {
         &mut self.clips
     }
 
+    pub fn insert(&mut self, index: usize, clip: Clip) -> CoreResult<()> {
+        let len = self.clips.len();
+        if index > len {
+            return Err(CoreError::InvalidReorder { index, len });
+        }
+        self.clips.insert(index, clip);
+        Ok(())
+    }
+
     pub fn len(&self) -> usize {
         self.clips.len()
     }

@@ -81,8 +81,18 @@ fn build_args(plan: &MergePlan, target: &CodecProfile) -> Vec<String> {
         "error".into(),
     ]);
     for input in &plan.inputs {
+        // Per-input trim before the `-i` so ffmpeg seeks the demuxer (fast)
+        // and emits only the requested range.
+        if input.trim_in_us > 0 {
+            args.push("-ss".into());
+            args.push(format_us_to_ts(input.trim_in_us));
+        }
+        if input.trim_out_us > 0 {
+            args.push("-to".into());
+            args.push(format_us_to_ts(input.trim_out_us));
+        }
         args.push("-i".into());
-        args.push(input.to_string_lossy().into_owned());
+        args.push(input.path.to_string_lossy().into_owned());
     }
     args.push("-filter_complex".into());
     args.push(filter);
@@ -138,6 +148,19 @@ fn quality_to_x264(q: Quality) -> (u32, &'static str) {
         Quality::High => (20, "medium"),
         Quality::Balanced => (23, "fast"),
     }
+}
+
+/// Format microseconds as `HH:MM:SS.sss` for ffmpeg's -ss / -to.
+fn format_us_to_ts(us: i64) -> String {
+    let us = us.max(0) as u64;
+    let total_ms = us / 1000;
+    let ms = total_ms % 1000;
+    let total_s = total_ms / 1000;
+    let s = total_s % 60;
+    let total_m = total_s / 60;
+    let m = total_m % 60;
+    let h = total_m / 60;
+    format!("{h:02}:{m:02}:{s:02}.{ms:03}")
 }
 
 #[cfg(test)]

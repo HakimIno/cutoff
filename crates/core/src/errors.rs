@@ -16,4 +16,7 @@ pub enum CoreError {
 
     #[error("unsupported file: {0}")]
     UnsupportedFile(PathBuf),
+
+    #[error("invalid trim: {0}")]
+    InvalidTrim(String),
 }

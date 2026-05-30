@@ -5161,6 +5161,7 @@ name = "video-merger-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "i-slint-backend-winit",
  "image",
  "rfd",
  "slint",

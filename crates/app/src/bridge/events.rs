@@ -11,6 +11,7 @@ use video_merger_ui::AppWindow;
 use video_merger_worker::{Command, Event, JobId};
 
 use super::models;
+use super::timeline_view;
 use super::{BridgeState, JobMeta};
 
 /// Bridge worker events back into Slint property updates.
@@ -51,6 +52,7 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             }
             models::push_clip(window, data);
             window.set_status_text(format!("Added: {name}").into());
+            refresh_ruler_from_state(window, state);
 
             // Kick off thumbnail extraction so the filmstrip fills in.
             let out_dir = thumbs_dir(&state.storage.data_dir, clip_id);
@@ -65,6 +67,7 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
                 pl.push(clip);
             }
             models::push_clip(window, data);
+            refresh_ruler_from_state(window, state);
             let out_dir = thumbs_dir(&state.storage.data_dir, clip_id);
             enqueue_thumbnails(cmd_tx, clip_id, path, out_dir);
         }
@@ -99,33 +102,52 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             duration_us,
             ..
         } => {
-            let mut pv = state.preview.lock().expect("preview mutex poisoned");
-            if pv.clip_id != Some(clip_id) {
-                return;
-            }
-            pv.duration_us = duration_us;
-        }
-        Event::FrameReady { clip_id, frame } => {
-            let (matches, duration_us) = {
+            let pending = {
                 let mut pv = state.preview.lock().expect("preview mutex poisoned");
                 if pv.clip_id != Some(clip_id) {
-                    (false, 0)
+                    return;
+                }
+                pv.duration_us = duration_us;
+                pv.pending_seek_us.take()
+            };
+            if let Some(us) = pending {
+                if let Err(err) = cmd_tx.try_send(Command::SeekPreview { pts_us: us }) {
+                    tracing::warn!(error = %err, "deferred seek failed");
+                }
+            }
+        }
+        Event::FrameReady { clip_id, frame } => {
+            let matches = {
+                let mut pv = state.preview.lock().expect("preview mutex poisoned");
+                if pv.clip_id != Some(clip_id) {
+                    false
                 } else {
                     pv.playhead_us = frame.pts_us;
-                    (true, pv.duration_us)
+                    true
                 }
             };
             if !matches {
                 return;
             }
+            // Timeline-global playhead: (clip_offset + local_pts) / total
+            let (global_fraction, global_us) = {
+                let pl = state.playlist.lock().expect("playlist mutex poisoned");
+                let total_us = timeline_view::total_duration_us(&pl);
+                let offset_us = timeline_view::selected_clip_window(&pl, Some(clip_id))
+                    .map(|(off, _)| off)
+                    .unwrap_or(0);
+                let abs_us = offset_us + frame.pts_us;
+                if total_us > 0 {
+                    ((abs_us as f64 / total_us as f64) as f32, abs_us)
+                } else {
+                    (0.0, abs_us)
+                }
+            };
             window.set_preview_frame(frame_to_image(&frame));
             window.set_playhead_text(SharedString::from(
-                crate::view_model::timeline_vm::format_us(frame.pts_us),
+                crate::view_model::timeline_vm::format_us(global_us),
             ));
-            if duration_us > 0 {
-                let f = (frame.pts_us as f64 / duration_us as f64) as f32;
-                window.set_playhead_fraction(f.clamp(0.0, 1.0));
-            }
+            window.set_playhead_fraction(global_fraction.clamp(0.0, 1.0));
         }
         Event::PreviewEnded { clip_id } => {
             let matches = {
@@ -168,6 +190,13 @@ fn frame_to_image(frame: &DecodedFrame) -> Image {
 
 fn thumbs_dir(data_dir: &std::path::Path, clip_id: Uuid) -> PathBuf {
     data_dir.join("thumbs").join(clip_id.to_string())
+}
+
+/// Recompute and push ruler ticks + total width using the bridge's current zoom.
+fn refresh_ruler_from_state(window: &AppWindow, state: &BridgeState) {
+    let zoom = *state.zoom.lock().expect("zoom mutex poisoned");
+    let pl = state.playlist.lock().expect("playlist mutex poisoned");
+    timeline_view::refresh_ruler(window, &pl, zoom);
 }
 
 fn enqueue_thumbnails(

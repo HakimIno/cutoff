@@ -3,6 +3,7 @@
 mod callbacks;
 mod events;
 pub mod models;
+pub mod timeline_view;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -21,6 +22,7 @@ pub type JobMetaMap = Arc<Mutex<HashMap<JobId, JobMeta>>>;
 pub type SharedConfig = Arc<Mutex<AppConfig>>;
 pub type SharedHistory = Arc<Mutex<History>>;
 pub type SharedPreview = Arc<Mutex<PreviewState>>;
+pub type SharedZoom = Arc<Mutex<f32>>;
 
 /// Metadata captured at export-submission time, looked up when the
 /// terminal event for that job arrives.
@@ -38,6 +40,9 @@ pub struct PreviewState {
     pub duration_us: i64,
     pub playhead_us: i64,
     pub playing: bool,
+    /// When set, applied as a `SeekPreview` on the next `PreviewOpened` event.
+    /// Lets a single seek-fraction click both switch clips and seek inside the new one.
+    pub pending_seek_us: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -49,7 +54,12 @@ pub struct BridgeState {
     pub history: SharedHistory,
     pub storage: Arc<Storage>,
     pub preview: SharedPreview,
+    pub zoom: SharedZoom,
 }
+
+pub const ZOOM_MIN: f32 = 1.0;
+pub const ZOOM_MAX: f32 = 200.0;
+pub const ZOOM_DEFAULT: f32 = 6.0;
 
 pub fn install(window: &AppWindow, worker: WorkerHandle, state: BridgeState) {
     let WorkerHandle {

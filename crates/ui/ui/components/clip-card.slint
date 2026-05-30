@@ -38,29 +38,27 @@ export component ClipBlock inherits Rectangle {
     in property <int> index;
     in property <bool> selected;
     in property <length> px-per-sec: 6px;
+    in property <bool> drag-ghost: false;
 
     callback clip-clicked(string);
     callback remove-clicked(string);
-    callback move-up-clicked(int);
-    callback move-down-clicked(int);
+    callback drag-started(int);
+    callback drag-moved(int, length);
+    callback drag-released(int, length);
 
-    // Width scales with duration; clamped so very short clips stay grabbable
-    // and very long ones don't break layout in early phases.
     width: max(min(self.px-per-sec * root.data.duration-secs, 800px), 120px);
     height: 104px;
     border-radius: Theme.radius;
     border-width: 1px;
-    border-color: root.selected ? Palette.accent : (outer.has-hover ? Palette.border-bright : Palette.border);
+    border-color: root.selected ? Palette.accent : (drag-area.has-hover ? Palette.border-bright : Palette.border);
     background: root.selected
         ? Palette.accent-glow
-        : (outer.has-hover ? Palette.surface-3 : Palette.surface-2);
+        : (drag-area.has-hover ? Palette.surface-3 : Palette.surface-2);
     clip: true;
+    opacity: root.drag-ghost ? 0.35 : 1.0;
     animate background { duration: 120ms; }
     animate border-color { duration: 120ms; }
-
-    outer := TouchArea {
-        clicked => { root.clip-clicked(root.data.id); }
-    }
+    animate opacity { duration: 120ms; }
 
     // Glow accent stripe for selected
     if root.selected : Rectangle {
@@ -99,7 +97,6 @@ export component ClipBlock inherits Rectangle {
         spacing: 0px;
         alignment: space-between;
 
-        // Top row: index badge + name
         HorizontalLayout {
             spacing: Theme.spacing-sm;
             alignment: start;
@@ -127,10 +124,8 @@ export component ClipBlock inherits Rectangle {
             }
         }
 
-        // Spacer reserved for filmstrip
         Rectangle { vertical-stretch: 1; }
 
-        // Bottom row: duration + delete only (reorder moves to Phase 3 drag-drop)
         HorizontalLayout {
             spacing: Theme.spacing-xs;
             alignment: space-between;
@@ -145,9 +140,41 @@ export component ClipBlock inherits Rectangle {
 
             IconAction {
                 label: "×";
-                dim: !outer.has-hover && !root.selected;
+                dim: !drag-area.has-hover && !root.selected;
                 hover-color: Palette.danger;
                 clicked => { root.remove-clicked(root.data.id); }
+            }
+        }
+    }
+
+    // Drag + click handler covers the whole card (IconAction sits on top of it
+    // and intercepts × clicks first because it's declared later in DOM order).
+    drag-area := TouchArea {
+        mouse-cursor: dragging ? grabbing : grab;
+        property <bool> dragging: false;
+        property <length> drag-threshold: 4px;
+
+        clicked => {
+            if (!self.dragging) {
+                root.clip-clicked(root.data.id);
+            }
+        }
+        moved => {
+            // Slint TouchArea moved fires while pressed and pointer moves.
+            // Start drag once we've crossed the threshold.
+            if (self.pressed && !self.dragging
+                && (abs(self.mouse-x - self.pressed-x) > self.drag-threshold)) {
+                self.dragging = true;
+                root.drag-started(root.index);
+            }
+            if (self.dragging) {
+                root.drag-moved(root.index, self.mouse-x - self.pressed-x);
+            }
+        }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.up && self.dragging) {
+                root.drag-released(root.index, self.mouse-x - self.pressed-x);
+                self.dragging = false;
             }
         }
     }

@@ -1,0 +1,10 @@
+import { Palette } from "../styles/palette.slint";
+
+/// A thin vertical bar shown between clip cards while a drag is in progress.
+/// The parent positions it via the `x` property.
+export component DropIndicator inherits Rectangle {
+    width: 2px;
+    height: 100%;
+    background: Palette.accent-2;
+    border-radius: 1px;
+}

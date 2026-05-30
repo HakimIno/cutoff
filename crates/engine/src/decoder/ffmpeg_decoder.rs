@@ -100,13 +100,6 @@ impl FfmpegMediaDecoder {
         (pts as f64 * self.time_base_num as f64 / self.time_base_den as f64 * 1_000_000.0) as i64
     }
 
-    fn us_to_pts(&self, us: i64) -> i64 {
-        if self.time_base_num == 0 {
-            return 0;
-        }
-        (us as f64 / 1_000_000.0 * self.time_base_den as f64 / self.time_base_num as f64) as i64
-    }
-
     fn convert(&mut self, decoded: &VideoFrame, pts_us: i64) -> DecoderResult<DecodedFrame> {
         let mut rgba = VideoFrame::empty();
         self.scaler.run(decoded, &mut rgba)?;
