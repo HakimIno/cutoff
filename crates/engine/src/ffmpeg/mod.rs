@@ -10,8 +10,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
-use video_merger_core::domain::MediaInfo;
-use video_merger_core::services::{MergePlan, MergeStrategy};
+use video_merger_core::domain::{ExportSpec, MediaInfo, Project};
 
 use crate::traits::{MergeEngine, ProgressSink};
 use crate::EngineResult;
@@ -38,17 +37,37 @@ impl MergeEngine for FfmpegEngine {
 
     async fn execute(
         &self,
-        plan: MergePlan,
+        project: Project,
+        spec: ExportSpec,
         progress: ProgressSink,
         cancel: CancellationToken,
     ) -> EngineResult<()> {
-        match &plan.strategy {
-            MergeStrategy::StreamCopy => {
-                stream_copy::run(&self.ffmpeg_bin, &plan, progress, cancel).await
-            }
-            MergeStrategy::Reencode { .. } => {
-                reencode::run(&self.ffmpeg_bin, &plan, progress, cancel).await
-            }
-        }
+        let render_plan = crate::composite::build_render_plan(&project);
+
+        let target = project
+            .all_clips()
+            .next()
+            .map(|c| c.info.profile.clone())
+            .unwrap_or_else(|| video_merger_core::domain::CodecProfile {
+                video_codec: "h264".into(),
+                audio_codec: "aac".into(),
+                resolution: video_merger_core::domain::Resolution {
+                    width: 1920,
+                    height: 1080,
+                },
+                frame_rate_mhz: 30_000,
+                pixel_format: "yuv420p".into(),
+            });
+
+        reencode::run_multitrack(
+            &self.ffmpeg_bin,
+            &render_plan,
+            &spec,
+            &target,
+            spec.quality.clone(),
+            progress,
+            cancel,
+        )
+        .await
     }
 }

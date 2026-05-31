@@ -57,6 +57,8 @@ component TrackLane inherits Rectangle {
 export component Timeline inherits Rectangle {
     in property <[ClipData]> clips-v1;
     in property <[ClipData]> clips-v2;
+    in property <[ClipData]> clips-a1;
+    in property <[ClipData]> clips-a2;
     in property <[RulerTick]> ruler-ticks;
     in property <string> selected-id;
     in property <length> px-per-sec: 6px;
@@ -69,6 +71,18 @@ export component Timeline inherits Rectangle {
 
     in property <bool> v1-muted;
     in property <bool> v2-muted;
+    in property <bool> a1-muted;
+    in property <bool> a2-muted;
+
+    in property <bool> v1-soloed;
+    in property <bool> v2-soloed;
+    in property <bool> a1-soloed;
+    in property <bool> a2-soloed;
+
+    in property <bool> v1-locked;
+    in property <bool> v2-locked;
+    in property <bool> a1-locked;
+    in property <bool> a2-locked;
 
     callback clip-clicked(string);
     callback remove-clicked(string);
@@ -80,8 +94,9 @@ export component Timeline inherits Rectangle {
     callback request-split(string);
     callback reveal-in-finder(string);
     callback move-to-track(string, int);
-    callback toggle-v1-mute();
-    callback toggle-v2-mute();
+    callback toggle-track-mute(int);
+    callback toggle-track-solo(int);
+    callback toggle-track-lock(int);
 
     background: Palette.background;
 
@@ -102,9 +117,9 @@ export component Timeline inherits Rectangle {
                 vertical-alignment: center;
             }
             Text {
-                text: (root.clips-v1.length + root.clips-v2.length) == 0
+                text: (root.clips-v1.length + root.clips-v2.length + root.clips-a1.length + root.clips-a2.length) == 0
                     ? "Empty"
-                    : (root.clips-v1.length + root.clips-v2.length) + " clips · 2 tracks · drag-drop video files · right-click to switch tracks";
+                    : (root.clips-v1.length + root.clips-v2.length + root.clips-a1.length + root.clips-a2.length) + " clips · 4 tracks · drag-drop video files · right-click to switch tracks";
                 color: Palette.text-dim;
                 font-size: Theme.font-xs;
                 vertical-alignment: center;
@@ -113,7 +128,7 @@ export component Timeline inherits Rectangle {
 
         // Lane container — fixed-width left rail with TrackHeaders, scrollable right region for ruler + lanes.
         Rectangle {
-            height: 218px;
+            height: 388px;
             border-radius: Theme.radius;
             background: Palette.surface;
             border-width: 1px;
@@ -128,24 +143,53 @@ export component Timeline inherits Rectangle {
                     width: 60px;
                     background: Palette.surface;
                     VerticalLayout {
-                        padding-top: 24px; // align with ruler height
+                        padding-top: 26px; // align with ruler height (24px ruler + 2px offset)
                         padding-left: 2px;
                         padding-right: 2px;
-                        spacing: 2px;
-                        Rectangle { height: 2px; background: transparent; }
+                        spacing: 4px;
                         TrackHeader {
                             label: "V2";
                             badge-color: Palette.accent-2;
                             muted: root.v2-muted;
+                            soloed: root.v2-soloed;
+                            locked: root.v2-locked;
                             height: 86px;
-                            toggle-mute => { root.toggle-v2-mute(); }
+                            toggle-mute => { root.toggle-track-mute(1); }
+                            toggle-solo => { root.toggle-track-solo(1); }
+                            toggle-lock => { root.toggle-track-lock(1); }
                         }
                         TrackHeader {
                             label: "V1";
                             badge-color: Palette.accent;
                             muted: root.v1-muted;
+                            soloed: root.v1-soloed;
+                            locked: root.v1-locked;
                             height: 86px;
-                            toggle-mute => { root.toggle-v1-mute(); }
+                            toggle-mute => { root.toggle-track-mute(0); }
+                            toggle-solo => { root.toggle-track-solo(0); }
+                            toggle-lock => { root.toggle-track-lock(0); }
+                        }
+                        TrackHeader {
+                            label: "A1";
+                            badge-color: Palette.success;
+                            muted: root.a1-muted;
+                            soloed: root.a1-soloed;
+                            locked: root.a1-locked;
+                            height: 86px;
+                            toggle-mute => { root.toggle-track-mute(2); }
+                            toggle-solo => { root.toggle-track-solo(2); }
+                            toggle-lock => { root.toggle-track-lock(2); }
+                        }
+                        TrackHeader {
+                            label: "A2";
+                            badge-color: Palette.success;
+                            muted: root.a2-muted;
+                            soloed: root.a2-soloed;
+                            locked: root.a2-locked;
+                            height: 86px;
+                            toggle-mute => { root.toggle-track-mute(3); }
+                            toggle-solo => { root.toggle-track-solo(3); }
+                            toggle-lock => { root.toggle-track-lock(3); }
                         }
                     }
                 }
@@ -154,7 +198,7 @@ export component Timeline inherits Rectangle {
                 Rectangle {
                     horizontal-stretch: 1;
 
-                    if (root.clips-v1.length + root.clips-v2.length) == 0 : VerticalLayout {
+                    if (root.clips-v1.length + root.clips-v2.length + root.clips-a1.length + root.clips-a2.length) == 0 : VerticalLayout {
                         alignment: center;
                         spacing: Theme.spacing-xs;
                         Text {
@@ -172,13 +216,13 @@ export component Timeline inherits Rectangle {
                         }
                     }
 
-                    if (root.clips-v1.length + root.clips-v2.length) > 0 : ScrollView {
+                    if (root.clips-v1.length + root.clips-v2.length + root.clips-a1.length + root.clips-a2.length) > 0 : ScrollView {
                         viewport-height: self.visible-height;
                         viewport-width: max(root.total-width + 12px, self.visible-width);
 
                         Rectangle {
                             width: max(root.total-width + 12px, parent.width);
-                            height: 216px;
+                            height: 386px;
 
                             // Ruler strip
                             Rectangle {
@@ -248,7 +292,7 @@ export component Timeline inherits Rectangle {
                                 move-to-track(id, t)  => { root.move-to-track(id, t); }
                             }
 
-                            // V1 lane (bottom, 86px)
+                            // V1 lane (86px)
                             v1-lane := TrackLane {
                                 x: 0;
                                 y: 116px;
@@ -272,11 +316,59 @@ export component Timeline inherits Rectangle {
                                 move-to-track(id, t)  => { root.move-to-track(id, t); }
                             }
 
-                            // Drop indicator (drawn over active lane — Phase 8 keeps it on V1).
+                            // A1 lane (86px)
+                            a1-lane := TrackLane {
+                                x: 0;
+                                y: 206px;
+                                width: parent.width;
+                                height: 86px;
+                                background: root.a1-muted
+                                    ? Palette.danger-soft
+                                    : (root.clips-a1.length == 0 ? Palette.background : transparent);
+                                clips: root.clips-a1;
+                                selected-id: root.selected-id;
+                                px-per-sec: root.px-per-sec;
+                                drag-from-index: root.drag-from-index;
+                                clip-clicked(id)      => { root.clip-clicked(id); }
+                                remove-clicked(id)    => { root.remove-clicked(id); }
+                                drag-started(i)       => { root.drag-started(i); }
+                                drag-moved(i, dx)     => { root.drag-moved(i, dx); }
+                                drag-released(i, dx)  => { root.drag-released(i, dx); }
+                                trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
+                                request-split(id)     => { root.request-split(id); }
+                                reveal-in-finder(id)  => { root.reveal-in-finder(id); }
+                                move-to-track(id, t)  => { root.move-to-track(id, t); }
+                            }
+
+                            // A2 lane (86px)
+                            a2-lane := TrackLane {
+                                x: 0;
+                                y: 296px;
+                                width: parent.width;
+                                height: 86px;
+                                background: root.a2-muted
+                                    ? Palette.danger-soft
+                                    : (root.clips-a2.length == 0 ? Palette.background : transparent);
+                                clips: root.clips-a2;
+                                selected-id: root.selected-id;
+                                px-per-sec: root.px-per-sec;
+                                drag-from-index: root.drag-from-index;
+                                clip-clicked(id)      => { root.clip-clicked(id); }
+                                remove-clicked(id)    => { root.remove-clicked(id); }
+                                drag-started(i)       => { root.drag-started(i); }
+                                drag-moved(i, dx)     => { root.drag-moved(i, dx); }
+                                drag-released(i, dx)  => { root.drag-released(i, dx); }
+                                trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
+                                request-split(id)     => { root.request-split(id); }
+                                reveal-in-finder(id)  => { root.reveal-in-finder(id); }
+                                move-to-track(id, t)  => { root.move-to-track(id, t); }
+                            }
+
+                            // Drop indicator (drawn over active lanes)
                             if root.drop-target-index >= 0 : DropIndicator {
                                 x: root.drop-indicator-x;
                                 y: 26px;
-                                height: 178px;
+                                height: 356px;
                             }
 
                             // Playhead spans both lanes

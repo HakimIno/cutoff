@@ -78,10 +78,12 @@ pub fn push_clip(window: &AppWindow, data: ClipData) {
         vm.push(data.clone());
     }
     // Mirror into the corresponding per-track lane.
-    let lane = if data.video_track == 1 {
-        window.get_clips_v2()
-    } else {
-        window.get_clips_v1()
+    let lane = match data.video_track {
+        1 => window.get_clips_v2(),
+        0 => window.get_clips_v1(),
+        2 => window.get_clips_a1(),
+        3 => window.get_clips_a2(),
+        _ => window.get_clips_v1(),
     };
     if let Some(vm) = lane.as_any().downcast_ref::<VecModel<ClipData>>() {
         vm.push(data);
@@ -123,6 +125,8 @@ fn sync_per_track(window: &AppWindow, playlist: &Playlist) {
     };
     push_lane(0, AppWindow::get_clips_v1);
     push_lane(1, AppWindow::get_clips_v2);
+    push_lane(2, AppWindow::get_clips_a1);
+    push_lane(3, AppWindow::get_clips_a2);
 }
 
 /// Replace one row's thumbnails by clip id (no full sync).
@@ -147,4 +151,6 @@ pub fn refresh_clip_thumbnails(window: &AppWindow, playlist: &Playlist, clip_id:
     update(window.get_clips());
     update(window.get_clips_v1());
     update(window.get_clips_v2());
+    update(window.get_clips_a1());
+    update(window.get_clips_a2());
 }

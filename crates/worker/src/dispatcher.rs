@@ -47,7 +47,7 @@ impl Dispatcher {
                         }
                     });
                 }
-                Command::Merge { id, plan } => {
+                Command::Merge { id, project, spec } => {
                     let engine = self.engine.clone();
                     let event_tx = self.event_tx.clone();
                     let token = CancellationToken::new();
@@ -57,9 +57,9 @@ impl Dispatcher {
                     let (prog_tx, prog_rx) = mpsc::unbounded_channel::<ProgressEvent>();
                     progress::forward(id, prog_rx, event_tx.clone());
 
-                    let output = plan.spec.output_path.clone();
+                    let output = spec.output_path.clone();
                     tokio::spawn(async move {
-                        let result = engine.execute(plan, prog_tx, token).await;
+                        let result = engine.execute(project, spec, prog_tx, token).await;
                         cancels.lock().await.remove(&id);
                         let event = match result {
                             Ok(_) => Event::Finished { id, output },

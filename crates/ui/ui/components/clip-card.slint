@@ -219,10 +219,20 @@ export component ClipBlock inherits Rectangle {
                 activated => { root.request-split(root.data.id); }
             }
             MenuItem {
-                title: root.data.video-track == 0 ? "Move to V2" : "Move to V1";
-                activated => {
-                    root.move-to-track(root.data.id, root.data.video-track == 0 ? 1 : 0);
-                }
+                title: "Move to V2";
+                activated => { root.move-to-track(root.data.id, 1); }
+            }
+            MenuItem {
+                title: "Move to V1";
+                activated => { root.move-to-track(root.data.id, 0); }
+            }
+            MenuItem {
+                title: "Move to A1";
+                activated => { root.move-to-track(root.data.id, 2); }
+            }
+            MenuItem {
+                title: "Move to A2";
+                activated => { root.move-to-track(root.data.id, 3); }
             }
             MenuItem {
                 title: "Delete clip";

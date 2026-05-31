@@ -1,8 +1,7 @@
 use std::path::PathBuf;
 
 use uuid::Uuid;
-use video_merger_core::domain::{Clip, ClipId, MediaInfo};
-use video_merger_core::services::MergePlan;
+use video_merger_core::domain::{Clip, ClipId, ExportSpec, MediaInfo, Project};
 use video_merger_engine::DecodedFrame;
 
 pub type JobId = Uuid;
@@ -16,7 +15,8 @@ pub enum Command {
     },
     Merge {
         id: JobId,
-        plan: MergePlan,
+        project: Project,
+        spec: ExportSpec,
     },
     Cancel {
         id: JobId,

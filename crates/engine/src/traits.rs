@@ -4,8 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use video_merger_core::domain::MediaInfo;
-use video_merger_core::services::MergePlan;
+use video_merger_core::domain::{ExportSpec, MediaInfo, Project};
 
 use crate::EngineResult;
 
@@ -28,7 +27,8 @@ pub trait MergeEngine: Send + Sync + 'static {
 
     async fn execute(
         &self,
-        plan: MergePlan,
+        project: Project,
+        spec: ExportSpec,
         progress: ProgressSink,
         cancel: CancellationToken,
     ) -> EngineResult<()>;

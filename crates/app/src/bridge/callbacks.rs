@@ -1,10 +1,11 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use slint::{ComponentHandle, SharedString, Weak};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 use video_merger_core::domain::{ContainerFormat, ExportSpec, Playlist, Quality};
-use video_merger_core::services::{self, MergePlanner, TrimSide};
+use video_merger_core::services::{self, TrimSide};
 use video_merger_persistence::Project;
 use video_merger_ui::AppWindow;
 use video_merger_worker::Command;
@@ -215,12 +216,15 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let proj = state.project.clone();
+        let tracks = state.tracks.clone();
         let zoom = state.zoom.clone();
-        window.on_save_project(move || on_save_project(weak.clone(), pl.clone(), proj.clone(), zoom.clone()));
+        window.on_save_project(move || on_save_project(weak.clone(), pl.clone(), proj.clone(), tracks.clone(), zoom.clone()));
     }
     {
         let weak = window.as_weak();
         let pl = state.playlist.clone();
+        let proj = state.project.clone();
+        let tracks = state.tracks.clone();
         let pv = state.preview.clone();
         let zoom = state.zoom.clone();
         let undo = state.undo.clone();
@@ -228,6 +232,8 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
             on_load_project(
                 weak.clone(),
                 pl.clone(),
+                proj.clone(),
+                tracks.clone(),
                 pv.clone(),
                 zoom.clone(),
                 undo.clone(),
@@ -267,9 +273,21 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         window.on_toggle_track_mute(move |idx| on_toggle_track_mute(weak.clone(), tracks.clone(), idx));
     }
     {
+        let weak = window.as_weak();
+        let tracks = state.tracks.clone();
+        window.on_toggle_track_solo(move |idx| on_toggle_track_solo(weak.clone(), tracks.clone(), idx));
+    }
+    {
+        let weak = window.as_weak();
+        let tracks = state.tracks.clone();
+        window.on_toggle_track_lock(move |idx| on_toggle_track_lock(weak.clone(), tracks.clone(), idx));
+    }
+    {
         let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
+        let proj = state.project.clone();
+        let tracks = state.tracks.clone();
         let aj = state.active_job.clone();
         let jm = state.job_meta.clone();
         let cfg = state.config.clone();
@@ -278,6 +296,8 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
                 weak.clone(),
                 tx.clone(),
                 pl.clone(),
+                proj.clone(),
+                tracks.clone(),
                 aj.clone(),
                 jm.clone(),
                 cfg.clone(),
@@ -843,8 +863,9 @@ fn on_redo(
 
 fn on_save_project(
     weak: Weak<AppWindow>,
-    _playlist: SharedPlaylist,
+    playlist: SharedPlaylist,
     project_state: super::SharedProject,
+    tracks_state: super::SharedTracks,
     zoom: SharedZoom,
 ) {
     let path = rfd::FileDialog::new()
@@ -855,7 +876,34 @@ fn on_save_project(
     let Some(path) = path else { return };
 
     let project = {
-        let core_proj = project_state.lock().expect("project mutex poisoned").clone();
+        let mut core_proj = {
+            let pl = playlist.lock().expect("playlist mutex poisoned");
+            video_merger_core::domain::Project::from_playlist(&pl)
+        };
+        let tracks = tracks_state.lock().expect("tracks mutex poisoned");
+        if core_proj.tracks.len() >= 4 {
+            core_proj.tracks[0].muted = tracks.muted[1]; // V2
+            core_proj.tracks[1].muted = tracks.muted[0]; // V1
+            core_proj.tracks[2].muted = tracks.muted[2]; // A1
+            core_proj.tracks[3].muted = tracks.muted[3]; // A2
+
+            core_proj.tracks[0].solo = tracks.soloed[1];
+            core_proj.tracks[1].solo = tracks.soloed[0];
+            core_proj.tracks[2].solo = tracks.soloed[2];
+            core_proj.tracks[3].solo = tracks.soloed[3];
+
+            core_proj.tracks[0].locked = tracks.locked[1];
+            core_proj.tracks[1].locked = tracks.locked[0];
+            core_proj.tracks[2].locked = tracks.locked[2];
+            core_proj.tracks[3].locked = tracks.locked[3];
+        }
+
+        // Update project_state so that it stays in sync
+        {
+            let mut proj_state = project_state.lock().expect("project mutex poisoned");
+            *proj_state = core_proj.clone();
+        }
+
         let z = *zoom.lock().expect("zoom mutex poisoned");
         Project::new(core_proj, z)
     };
@@ -879,6 +927,8 @@ fn on_save_project(
 fn on_load_project(
     weak: Weak<AppWindow>,
     playlist: SharedPlaylist,
+    project_state: super::SharedProject,
+    tracks_state: super::SharedTracks,
     preview: SharedPreview,
     zoom: SharedZoom,
     undo: SharedUndo,
@@ -913,6 +963,55 @@ fn on_load_project(
             ZOOM_DEFAULT
         };
     }
+
+    let core_proj = project.core_project();
+    {
+        let mut proj = project_state.lock().expect("project mutex poisoned");
+        *proj = core_proj.clone();
+    }
+
+    let mut loaded_muted = [false; 4];
+    let mut loaded_soloed = [false; 4];
+    let mut loaded_locked = [false; 4];
+    if core_proj.tracks.len() >= 4 {
+        loaded_muted[1] = core_proj.tracks[0].muted; // V2
+        loaded_muted[0] = core_proj.tracks[1].muted; // V1
+        loaded_muted[2] = core_proj.tracks[2].muted; // A1
+        loaded_muted[3] = core_proj.tracks[3].muted; // A2
+
+        loaded_soloed[1] = core_proj.tracks[0].solo;
+        loaded_soloed[0] = core_proj.tracks[1].solo;
+        loaded_soloed[2] = core_proj.tracks[2].solo;
+        loaded_soloed[3] = core_proj.tracks[3].solo;
+
+        loaded_locked[1] = core_proj.tracks[0].locked;
+        loaded_locked[0] = core_proj.tracks[1].locked;
+        loaded_locked[2] = core_proj.tracks[2].locked;
+        loaded_locked[3] = core_proj.tracks[3].locked;
+    }
+    {
+        let mut t = tracks_state.lock().expect("tracks mutex poisoned");
+        t.muted = loaded_muted;
+        t.soloed = loaded_soloed;
+        t.locked = loaded_locked;
+    }
+    if let Some(window) = weak.upgrade() {
+        window.set_v2_muted(loaded_muted[1]);
+        window.set_v1_muted(loaded_muted[0]);
+        window.set_a1_muted(loaded_muted[2]);
+        window.set_a2_muted(loaded_muted[3]);
+
+        window.set_v2_soloed(loaded_soloed[1]);
+        window.set_v1_soloed(loaded_soloed[0]);
+        window.set_a1_soloed(loaded_soloed[2]);
+        window.set_a2_soloed(loaded_soloed[3]);
+
+        window.set_v2_locked(loaded_locked[1]);
+        window.set_v1_locked(loaded_locked[0]);
+        window.set_a1_locked(loaded_locked[2]);
+        window.set_a2_locked(loaded_locked[3]);
+    }
+
     let loaded_playlist = project.playlist_compat();
     restore_playlist(weak.clone(), playlist, preview, zoom, loaded_playlist);
     if let Some(window) = weak.upgrade() {
@@ -952,7 +1051,7 @@ fn on_move_to_track(
     target_track: u8,
 ) {
     let Ok(uuid) = Uuid::parse_str(id.as_str()) else { return };
-    if target_track > 1 {
+    if target_track > 3 {
         return;
     }
     {
@@ -980,20 +1079,72 @@ fn on_toggle_track_mute(
     tracks: super::SharedTracks,
     idx: i32,
 ) {
-    if idx < 0 || idx > 1 {
+    if idx < 0 || idx > 3 {
         return;
     }
     let i = idx as usize;
     let now_muted = {
         let mut t = tracks.lock().expect("tracks mutex poisoned");
-        t.video_muted[i] = !t.video_muted[i];
-        t.video_muted[i]
+        t.muted[i] = !t.muted[i];
+        t.muted[i]
     };
     if let Some(window) = weak.upgrade() {
-        if i == 0 {
-            window.set_v1_muted(now_muted);
-        } else {
-            window.set_v2_muted(now_muted);
+        match i {
+            0 => window.set_v1_muted(now_muted),
+            1 => window.set_v2_muted(now_muted),
+            2 => window.set_a1_muted(now_muted),
+            3 => window.set_a2_muted(now_muted),
+            _ => {}
+        }
+    }
+}
+
+fn on_toggle_track_solo(
+    weak: Weak<AppWindow>,
+    tracks: super::SharedTracks,
+    idx: i32,
+) {
+    if idx < 0 || idx > 3 {
+        return;
+    }
+    let i = idx as usize;
+    let now_soloed = {
+        let mut t = tracks.lock().expect("tracks mutex poisoned");
+        t.soloed[i] = !t.soloed[i];
+        t.soloed[i]
+    };
+    if let Some(window) = weak.upgrade() {
+        match i {
+            0 => window.set_v1_soloed(now_soloed),
+            1 => window.set_v2_soloed(now_soloed),
+            2 => window.set_a1_soloed(now_soloed),
+            3 => window.set_a2_soloed(now_soloed),
+            _ => {}
+        }
+    }
+}
+
+fn on_toggle_track_lock(
+    weak: Weak<AppWindow>,
+    tracks: super::SharedTracks,
+    idx: i32,
+) {
+    if idx < 0 || idx > 3 {
+        return;
+    }
+    let i = idx as usize;
+    let now_locked = {
+        let mut t = tracks.lock().expect("tracks mutex poisoned");
+        t.locked[i] = !t.locked[i];
+        t.locked[i]
+    };
+    if let Some(window) = weak.upgrade() {
+        match i {
+            0 => window.set_v1_locked(now_locked),
+            1 => window.set_v2_locked(now_locked),
+            2 => window.set_a1_locked(now_locked),
+            3 => window.set_a2_locked(now_locked),
+            _ => {}
         }
     }
 }
@@ -1017,6 +1168,8 @@ fn on_export(
     weak: Weak<AppWindow>,
     cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
+    _project_state: super::SharedProject,
+    tracks_state: super::SharedTracks,
     active_job: ActiveJob,
     job_meta: JobMetaMap,
     config: SharedConfig,
@@ -1032,31 +1185,54 @@ fn on_export(
         None => return,
     };
 
-    let plan_result = {
-        let pl = playlist.lock().expect("playlist mutex poisoned");
-        if pl.is_empty() {
-            if let Some(window) = weak.upgrade() {
-                window.set_status_text("Add some clips first".into());
+    let (project, spec, render_plan) = {
+        let mut proj = {
+            let pl = playlist.lock().expect("playlist mutex poisoned");
+            if pl.is_empty() {
+                if let Some(window) = weak.upgrade() {
+                    window.set_status_text("Add some clips first".into());
+                }
+                return;
             }
-            return;
+            video_merger_core::domain::Project::from_playlist(&pl)
+        };
+
+        let tracks = tracks_state.lock().expect("tracks mutex poisoned");
+        if proj.tracks.len() >= 4 {
+            proj.tracks[0].muted = tracks.muted[1]; // V2
+            proj.tracks[1].muted = tracks.muted[0]; // V1
+            proj.tracks[2].muted = tracks.muted[2]; // A1
+            proj.tracks[3].muted = tracks.muted[3]; // A2
+
+            proj.tracks[0].solo = tracks.soloed[1];
+            proj.tracks[1].solo = tracks.soloed[0];
+            proj.tracks[2].solo = tracks.soloed[2];
+            proj.tracks[3].solo = tracks.soloed[3];
+
+            proj.tracks[0].locked = tracks.locked[1];
+            proj.tracks[1].locked = tracks.locked[0];
+            proj.tracks[2].locked = tracks.locked[2];
+            proj.tracks[3].locked = tracks.locked[3];
         }
+
+        // Solo logic: if any track is soloed, all non-soloed tracks are muted.
+        let any_solo = proj.tracks.iter().any(|t| t.solo);
+        if any_solo {
+            for t in &mut proj.tracks {
+                if !t.solo {
+                    t.muted = true;
+                }
+            }
+        }
+
         let spec = ExportSpec {
             output_path: output_path.clone(),
             format: ContainerFormat::Mp4,
             quality: Quality::Lossless,
         };
-        MergePlanner::build(&pl, spec)
-    };
 
-    let plan = match plan_result {
-        Ok(p) => p,
-        Err(err) => {
-            tracing::warn!(error = %err, "merge plan build failed");
-            if let Some(window) = weak.upgrade() {
-                window.set_status_text(format!("Plan error: {err}").into());
-            }
-            return;
-        }
+        let render_plan = video_merger_engine::composite::build_render_plan(&proj);
+        (proj, spec, render_plan)
     };
 
     let id = Uuid::new_v4();
@@ -1064,8 +1240,8 @@ fn on_export(
         id,
         JobMeta {
             output_path: output_path.clone(),
-            input_count: plan.inputs.len(),
-            duration: plan.total_duration,
+            input_count: render_plan.inputs.len(),
+            duration: Duration::from_micros(render_plan.total_duration_us.max(0) as u64),
         },
     );
     *active_job.lock().expect("active_job mutex poisoned") = Some(id);
@@ -1076,7 +1252,7 @@ fn on_export(
         window.set_status_text("Exporting…".into());
     }
 
-    if let Err(err) = cmd_tx.try_send(Command::Merge { id, plan }) {
+    if let Err(err) = cmd_tx.try_send(Command::Merge { id, project, spec }) {
         tracing::warn!(error = %err, "failed to enqueue merge command");
         job_meta.lock().expect("job_meta mutex poisoned").remove(&id);
         *active_job.lock().expect("active_job mutex poisoned") = None;

@@ -6,8 +6,12 @@ export component TrackHeader inherits Rectangle {
     in property <string> label;
     in property <color> badge-color: Palette.accent;
     in property <bool> muted;
+    in property <bool> soloed;
+    in property <bool> locked;
 
     callback toggle-mute();
+    callback toggle-solo();
+    callback toggle-lock();
 
     width: 56px;
     background: Palette.surface-2;
@@ -36,26 +40,77 @@ export component TrackHeader inherits Rectangle {
             }
         }
 
-        // Mute toggle
-        mute-area := TouchArea {
-            mouse-cursor: pointer;
-            width: 36px; height: 16px;
-            clicked => { root.toggle-mute(); }
-            Rectangle {
-                border-radius: Theme.radius-sm;
-                background: root.muted
-                    ? Palette.danger-soft
-                    : (parent.has-hover ? Palette.surface-3 : transparent);
-                border-width: 1px;
-                border-color: root.muted ? Palette.danger : Palette.border;
-                animate background { duration: 100ms; }
-                Text {
-                    text: root.muted ? "MUTE" : "On";
-                    color: root.muted ? Palette.danger : Palette.text-muted;
-                    font-size: Theme.font-xs;
-                    font-weight: 600;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+        // Controls row
+        HorizontalLayout {
+            spacing: 2px;
+            alignment: center;
+
+            // Mute Button (M)
+            TouchArea {
+                mouse-cursor: pointer;
+                width: 16px; height: 16px;
+                clicked => { root.toggle-mute(); }
+                Rectangle {
+                    border-radius: 2px;
+                    background: root.muted
+                        ? Palette.danger
+                        : (parent.has-hover ? Palette.surface-3 : transparent);
+                    border-width: 1px;
+                    border-color: root.muted ? Palette.danger : Palette.border;
+                    Text {
+                        text: "M";
+                        color: root.muted ? white : Palette.text-muted;
+                        font-size: 10px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // Solo Button (S)
+            TouchArea {
+                mouse-cursor: pointer;
+                width: 16px; height: 16px;
+                clicked => { root.toggle-solo(); }
+                Rectangle {
+                    border-radius: 2px;
+                    background: root.soloed
+                        ? Palette.warning
+                        : (parent.has-hover ? Palette.surface-3 : transparent);
+                    border-width: 1px;
+                    border-color: root.soloed ? Palette.warning : Palette.border;
+                    Text {
+                        text: "S";
+                        color: root.soloed ? white : Palette.text-muted;
+                        font-size: 10px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // Lock Button (L)
+            TouchArea {
+                mouse-cursor: pointer;
+                width: 16px; height: 16px;
+                clicked => { root.toggle-lock(); }
+                Rectangle {
+                    border-radius: 2px;
+                    background: root.locked
+                        ? Palette.text-muted
+                        : (parent.has-hover ? Palette.surface-3 : transparent);
+                    border-width: 1px;
+                    border-color: root.locked ? Palette.text-muted : Palette.border;
+                    Text {
+                        text: "L";
+                        color: root.locked ? white : Palette.text-muted;
+                        font-size: 10px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
                 }
             }
         }

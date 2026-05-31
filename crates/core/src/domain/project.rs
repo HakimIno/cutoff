@@ -85,12 +85,22 @@ impl Project {
     /// A1 for audio). V2/A2 remain empty.
     pub fn from_playlist(playlist: &super::playlist::Playlist) -> Self {
         let mut project = Self::with_default_tracks();
+        let v2_idx = project.track_index_by_name("V2").unwrap_or(0);
         let v1_idx = project.track_index_by_name("V1").unwrap_or(1);
+        let a1_idx = project.track_index_by_name("A1").unwrap_or(2);
+        let a2_idx = project.track_index_by_name("A2").unwrap_or(3);
 
         let mut cursor_us: i64 = 0;
         for clip in playlist.clips() {
             let dur_us = clip.effective_duration_us();
-            project.tracks[v1_idx].clips.push(TrackClip {
+            let track_idx = match clip.video_track {
+                0 => v1_idx,
+                1 => v2_idx,
+                2 => a1_idx,
+                3 => a2_idx,
+                _ => v1_idx,
+            };
+            project.tracks[track_idx].clips.push(TrackClip {
                 clip: clip.clone(),
                 start_us: cursor_us,
             });

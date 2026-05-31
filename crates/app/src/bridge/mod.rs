@@ -40,10 +40,12 @@ pub struct AudioState {
     pub master_volume: f32, // 1.0 = unity
 }
 
-/// Per-track UI/playback flags. Index 0 = V1, 1 = V2.
+/// Per-track UI/playback flags. Index 0 = V1, 1 = V2, 2 = A1, 3 = A2.
 #[derive(Debug, Default, Clone)]
 pub struct TracksState {
-    pub video_muted: [bool; 2],
+    pub muted: [bool; 4],
+    pub soloed: [bool; 4],
+    pub locked: [bool; 4],
 }
 
 pub type SharedTracks = Arc<Mutex<TracksState>>;
@@ -105,6 +107,7 @@ pub fn install(window: &AppWindow, worker: WorkerHandle, state: BridgeState) {
 
 /// Synchronize the legacy Playlist from the Project's V1 track.
 /// Call this after mutating the Project to keep backward-compat callers happy.
+#[allow(dead_code)]
 pub fn sync_playlist_from_project(state: &BridgeState) {
     let playlist = {
         let proj = state.project.lock().expect("project mutex poisoned");

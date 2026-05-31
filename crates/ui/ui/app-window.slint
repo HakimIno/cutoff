@@ -22,8 +22,20 @@ export component AppWindow inherits Window {
     in property <[ClipData]> clips;          // all clips, used by sidebar count/preview lookup
     in property <[ClipData]> clips-v1;
     in property <[ClipData]> clips-v2;
+    in property <[ClipData]> clips-a1;
+    in property <[ClipData]> clips-a2;
     in property <bool> v1-muted;
     in property <bool> v2-muted;
+    in property <bool> a1-muted;
+    in property <bool> a2-muted;
+    in property <bool> v1-soloed;
+    in property <bool> v2-soloed;
+    in property <bool> a1-soloed;
+    in property <bool> a2-soloed;
+    in property <bool> v1-locked;
+    in property <bool> v2-locked;
+    in property <bool> a1-locked;
+    in property <bool> a2-locked;
     in property <string> selected-id;
     in property <bool> has-selection;
 
@@ -97,6 +109,8 @@ export component AppWindow inherits Window {
     callback toggle-master-mute();
     callback move-to-track(string, int);
     callback toggle-track-mute(int);
+    callback toggle-track-solo(int);
+    callback toggle-track-lock(int);
 
     in property <bool> master-muted;
 
@@ -221,7 +235,7 @@ export component AppWindow inherits Window {
 
                     // Timeline lane
                     Rectangle {
-                        height: 220px;
+                        height: 420px;
                         background: Palette.surface;
                         Rectangle {
                             x: 0; y: 0;
@@ -231,8 +245,20 @@ export component AppWindow inherits Window {
                         Timeline {
                             clips-v1: root.clips-v1;
                             clips-v2: root.clips-v2;
+                            clips-a1: root.clips-a1;
+                            clips-a2: root.clips-a2;
                             v1-muted: root.v1-muted;
                             v2-muted: root.v2-muted;
+                            a1-muted: root.a1-muted;
+                            a2-muted: root.a2-muted;
+                            v1-soloed: root.v1-soloed;
+                            v2-soloed: root.v2-soloed;
+                            a1-soloed: root.a1-soloed;
+                            a2-soloed: root.a2-soloed;
+                            v1-locked: root.v1-locked;
+                            v2-locked: root.v2-locked;
+                            a1-locked: root.a1-locked;
+                            a2-locked: root.a2-locked;
                             ruler-ticks: root.ruler-ticks;
                             selected-id: root.selected-id;
                             px-per-sec: root.px-per-sec;
@@ -254,8 +280,9 @@ export component AppWindow inherits Window {
                             }
                             reveal-in-finder(id) => { root.reveal-in-finder(id); }
                             move-to-track(id, t) => { root.move-to-track(id, t); }
-                            toggle-v1-mute => { root.toggle-track-mute(0); }
-                            toggle-v2-mute => { root.toggle-track-mute(1); }
+                            toggle-track-mute(t) => { root.toggle-track-mute(t); }
+                            toggle-track-solo(t) => { root.toggle-track-solo(t); }
+                            toggle-track-lock(t) => { root.toggle-track-lock(t); }
                         }
                     }
                 }
