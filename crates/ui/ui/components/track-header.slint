@@ -1,5 +1,6 @@
 import { Palette } from "../styles/palette.slint";
 import { Theme } from "../styles/theme.slint";
+import { SpeakerIcon, SpeakerMutedIcon, LockClosedIcon, LockOpenIcon } from "icons.slint";
 
 /// Left-edge label + mute/lock chips for a single timeline track.
 export component TrackHeader inherits Rectangle {
@@ -45,8 +46,8 @@ export component TrackHeader inherits Rectangle {
             spacing: 2px;
             alignment: center;
 
-            // Mute Button (M)
-            TouchArea {
+            // Mute Button (Speaker)
+            mute-ta := TouchArea {
                 mouse-cursor: pointer;
                 width: 16px; height: 16px;
                 clicked => { root.toggle-mute(); }
@@ -54,22 +55,25 @@ export component TrackHeader inherits Rectangle {
                     border-radius: 2px;
                     background: root.muted
                         ? Palette.danger
-                        : (parent.has-hover ? Palette.surface-3 : transparent);
+                        : (mute-ta.has-hover ? Palette.surface-3 : transparent);
                     border-width: 1px;
                     border-color: root.muted ? Palette.danger : Palette.border;
-                    Text {
-                        text: "M";
-                        color: root.muted ? white : Palette.text-muted;
-                        font-size: 10px;
-                        font-weight: 700;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+
+                    if !root.muted : SpeakerIcon {
+                        icon-color: mute-ta.has-hover ? white : Palette.text-muted;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    if root.muted : SpeakerMutedIcon {
+                        icon-color: white;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
                     }
                 }
             }
 
             // Solo Button (S)
-            TouchArea {
+            solo-ta := TouchArea {
                 mouse-cursor: pointer;
                 width: 16px; height: 16px;
                 clicked => { root.toggle-solo(); }
@@ -77,13 +81,13 @@ export component TrackHeader inherits Rectangle {
                     border-radius: 2px;
                     background: root.soloed
                         ? Palette.warning
-                        : (parent.has-hover ? Palette.surface-3 : transparent);
+                        : (solo-ta.has-hover ? Palette.surface-3 : transparent);
                     border-width: 1px;
                     border-color: root.soloed ? Palette.warning : Palette.border;
                     Text {
                         text: "S";
                         color: root.soloed ? white : Palette.text-muted;
-                        font-size: 10px;
+                        font-size: 9px;
                         font-weight: 700;
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -91,8 +95,8 @@ export component TrackHeader inherits Rectangle {
                 }
             }
 
-            // Lock Button (L)
-            TouchArea {
+            // Lock Button (Padlock)
+            lock-ta := TouchArea {
                 mouse-cursor: pointer;
                 width: 16px; height: 16px;
                 clicked => { root.toggle-lock(); }
@@ -100,16 +104,19 @@ export component TrackHeader inherits Rectangle {
                     border-radius: 2px;
                     background: root.locked
                         ? Palette.text-muted
-                        : (parent.has-hover ? Palette.surface-3 : transparent);
+                        : (lock-ta.has-hover ? Palette.surface-3 : transparent);
                     border-width: 1px;
                     border-color: root.locked ? Palette.text-muted : Palette.border;
-                    Text {
-                        text: "L";
-                        color: root.locked ? white : Palette.text-muted;
-                        font-size: 10px;
-                        font-weight: 700;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+
+                    if !root.locked : LockOpenIcon {
+                        icon-color: lock-ta.has-hover ? white : Palette.text-dim;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                    }
+                    if root.locked : LockClosedIcon {
+                        icon-color: white;
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
                     }
                 }
             }

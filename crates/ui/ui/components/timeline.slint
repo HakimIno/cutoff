@@ -128,7 +128,7 @@ export component Timeline inherits Rectangle {
 
         // Lane container — fixed-width left rail with TrackHeaders, scrollable right region for ruler + lanes.
         Rectangle {
-            height: 388px;
+            height: 364px;
             border-radius: Theme.radius;
             background: Palette.surface;
             border-width: 1px;
@@ -153,7 +153,7 @@ export component Timeline inherits Rectangle {
                             muted: root.v2-muted;
                             soloed: root.v2-soloed;
                             locked: root.v2-locked;
-                            height: 86px;
+                            height: 80px;
                             toggle-mute => { root.toggle-track-mute(1); }
                             toggle-solo => { root.toggle-track-solo(1); }
                             toggle-lock => { root.toggle-track-lock(1); }
@@ -164,7 +164,7 @@ export component Timeline inherits Rectangle {
                             muted: root.v1-muted;
                             soloed: root.v1-soloed;
                             locked: root.v1-locked;
-                            height: 86px;
+                            height: 80px;
                             toggle-mute => { root.toggle-track-mute(0); }
                             toggle-solo => { root.toggle-track-solo(0); }
                             toggle-lock => { root.toggle-track-lock(0); }
@@ -175,7 +175,7 @@ export component Timeline inherits Rectangle {
                             muted: root.a1-muted;
                             soloed: root.a1-soloed;
                             locked: root.a1-locked;
-                            height: 86px;
+                            height: 80px;
                             toggle-mute => { root.toggle-track-mute(2); }
                             toggle-solo => { root.toggle-track-solo(2); }
                             toggle-lock => { root.toggle-track-lock(2); }
@@ -186,7 +186,7 @@ export component Timeline inherits Rectangle {
                             muted: root.a2-muted;
                             soloed: root.a2-soloed;
                             locked: root.a2-locked;
-                            height: 86px;
+                            height: 80px;
                             toggle-mute => { root.toggle-track-mute(3); }
                             toggle-solo => { root.toggle-track-solo(3); }
                             toggle-lock => { root.toggle-track-lock(3); }
@@ -222,7 +222,7 @@ export component Timeline inherits Rectangle {
 
                         Rectangle {
                             width: max(root.total-width + 12px, parent.width);
-                            height: 386px;
+                            height: 362px;
 
                             // Ruler strip
                             Rectangle {
@@ -268,12 +268,12 @@ export component Timeline inherits Rectangle {
                                 }
                             }
 
-                            // V2 lane (top, 86px)
+                            // V2 lane (top, 80px)
                             v2-lane := TrackLane {
                                 x: 0;
                                 y: 26px;
                                 width: parent.width;
-                                height: 86px;
+                                height: 80px;
                                 background: root.v2-muted
                                     ? Palette.danger-soft
                                     : (root.clips-v2.length == 0 ? Palette.background : transparent);
@@ -292,12 +292,12 @@ export component Timeline inherits Rectangle {
                                 move-to-track(id, t)  => { root.move-to-track(id, t); }
                             }
 
-                            // V1 lane (86px)
+                            // V1 lane (80px)
                             v1-lane := TrackLane {
                                 x: 0;
-                                y: 116px;
+                                y: 110px;
                                 width: parent.width;
-                                height: 86px;
+                                height: 80px;
                                 background: root.v1-muted
                                     ? Palette.danger-soft
                                     : (root.clips-v1.length == 0 ? Palette.background : transparent);
@@ -316,12 +316,12 @@ export component Timeline inherits Rectangle {
                                 move-to-track(id, t)  => { root.move-to-track(id, t); }
                             }
 
-                            // A1 lane (86px)
+                            // A1 lane (80px)
                             a1-lane := TrackLane {
                                 x: 0;
-                                y: 206px;
+                                y: 194px;
                                 width: parent.width;
-                                height: 86px;
+                                height: 80px;
                                 background: root.a1-muted
                                     ? Palette.danger-soft
                                     : (root.clips-a1.length == 0 ? Palette.background : transparent);
@@ -340,12 +340,12 @@ export component Timeline inherits Rectangle {
                                 move-to-track(id, t)  => { root.move-to-track(id, t); }
                             }
 
-                            // A2 lane (86px)
+                            // A2 lane (80px)
                             a2-lane := TrackLane {
                                 x: 0;
-                                y: 296px;
+                                y: 278px;
                                 width: parent.width;
-                                height: 86px;
+                                height: 80px;
                                 background: root.a2-muted
                                     ? Palette.danger-soft
                                     : (root.clips-a2.length == 0 ? Palette.background : transparent);
@@ -368,7 +368,7 @@ export component Timeline inherits Rectangle {
                             if root.drop-target-index >= 0 : DropIndicator {
                                 x: root.drop-indicator-x;
                                 y: 26px;
-                                height: 356px;
+                                height: 332px;
                             }
 
                             // Playhead spans both lanes

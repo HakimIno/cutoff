@@ -1,6 +1,7 @@
 import { Palette } from "../styles/palette.slint";
 import { Theme } from "../styles/theme.slint";
 import { WaveformStrip } from "waveform-strip.slint";
+import { CloseIcon } from "icons.slint";
 
 export struct ClipData {
     id: string,
@@ -15,7 +16,6 @@ export struct ClipData {
 }
 
 component IconAction inherits Rectangle {
-    in property <string> label;
     in property <bool> dim: false;
     in property <color> hover-color: Palette.accent;
     callback clicked();
@@ -27,13 +27,10 @@ component IconAction inherits Rectangle {
     animate opacity { duration: 100ms; }
 
     ta := TouchArea { clicked => { root.clicked(); } }
-    Text {
-        text: root.label;
-        color: Palette.text;
-        font-size: Theme.font-sm;
-        font-weight: 700;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    CloseIcon {
+        icon-color: ta.has-hover ? white : Palette.text;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
     }
 }
 
@@ -55,7 +52,7 @@ export component ClipBlock inherits Rectangle {
     callback move-to-track(string, int);
 
     width: max(min(self.px-per-sec * root.data.duration-secs, 800px), 120px);
-    height: 104px;
+    height: 76px;
     border-radius: Theme.radius;
     border-width: 1px;
     border-color: root.selected ? Palette.accent : (drag-area.has-hover ? Palette.border-bright : Palette.border);
@@ -79,9 +76,9 @@ export component ClipBlock inherits Rectangle {
     // Filmstrip background (thumbnails laid across the card)
     Rectangle {
         x: 0;
-        y: 22px;
+        y: 20px;
         width: parent.width;
-        height: 42px;
+        height: 28px;
         clip: true;
         background: #000000;
 
@@ -91,7 +88,7 @@ export component ClipBlock inherits Rectangle {
             for thumb[i] in root.data.thumbnails: Image {
                 source: thumb;
                 width: parent.width / max(root.data.thumbnails.length, 1);
-                height: 42px;
+                height: 28px;
                 image-fit: cover;
             }
         }
@@ -100,9 +97,9 @@ export component ClipBlock inherits Rectangle {
     // Waveform strip beneath the filmstrip.
     Rectangle {
         x: 0;
-        y: 64px;
+        y: 48px;
         width: parent.width;
-        height: 16px;
+        height: 12px;
         background: Palette.surface;
         opacity: root.data.muted ? 0.4 : 1.0;
         WaveformStrip {
@@ -164,7 +161,6 @@ export component ClipBlock inherits Rectangle {
             }
 
             IconAction {
-                label: "×";
                 dim: !drag-area.has-hover && !root.selected;
                 hover-color: Palette.danger;
                 clicked => { root.remove-clicked(root.data.id); }

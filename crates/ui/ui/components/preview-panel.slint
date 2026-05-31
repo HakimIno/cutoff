@@ -1,5 +1,6 @@
 import { Palette } from "../styles/palette.slint";
 import { Theme } from "../styles/theme.slint";
+import { PlayIcon, PauseIcon, SkipStartIcon, SkipEndIcon, StepForwardIcon, StepBackwardIcon } from "icons.slint";
 
 component PlayButton inherits Rectangle {
     in property <bool> playing;
@@ -16,12 +17,35 @@ component PlayButton inherits Rectangle {
         enabled: root.enabled-state;
         clicked => { root.clicked(); }
     }
-    Text {
-        text: root.playing ? "‖" : "▶";
-        color: white;
-        font-size: 11px;
-        horizontal-alignment: center;
-        vertical-alignment: center;
+
+    if !root.playing : PlayIcon {
+        icon-color: white;
+        x: (parent.width - self.width) / 2 + 1px;
+        y: (parent.height - self.height) / 2;
+    }
+    if root.playing : PauseIcon {
+        icon-color: white;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+}
+
+component DeckButton inherits Rectangle {
+    in property <bool> enabled-state: true;
+    out property <bool> has-hover: ta.has-hover;
+    callback clicked();
+    width: 26px; height: 26px;
+    border-radius: Theme.radius-sm;
+    background: ta.has-hover && root.enabled-state ? Palette.surface-3 : Palette.surface-2;
+    border-width: 1px;
+    border-color: ta.has-hover && root.enabled-state ? Palette.border-bright : Palette.border;
+    opacity: root.enabled-state ? 1.0 : 0.4;
+    animate background { duration: 100ms; }
+    animate opacity { duration: 100ms; }
+
+    ta := TouchArea {
+        enabled: root.enabled-state;
+        clicked => { root.clicked(); }
     }
 }
 
@@ -35,6 +59,9 @@ export component PreviewPanel inherits Rectangle {
     in property <bool> playing;
 
     callback play-toggle();
+    callback step-frame(int);
+    callback jump-start();
+    callback jump-end();
 
     background: Palette.surface;
     border-radius: Theme.radius-lg;
@@ -92,7 +119,7 @@ export component PreviewPanel inherits Rectangle {
             }
         }
 
-        // Player chrome bar
+        // Player chrome bar (Hardware Deck style)
         Rectangle {
             height: 44px;
             background: Palette.surface-2;
@@ -102,28 +129,87 @@ export component PreviewPanel inherits Rectangle {
                 spacing: Theme.spacing-md;
                 alignment: space-between;
 
+                // Timecode
                 HorizontalLayout {
-                    spacing: Theme.spacing-md;
+                    spacing: Theme.spacing-xs;
                     alignment: start;
+                    Text {
+                        text: root.playhead-text;
+                        color: Palette.accent-2;
+                        font-size: Theme.font-sm;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: " / " + (root.has-selection ? root.selected-duration : "00:00");
+                        color: Palette.text-muted;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Transport Controls
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: center;
+                    btn-start := DeckButton {
+                        enabled-state: root.has-selection;
+                        clicked => { root.jump-start(); }
+                        SkipStartIcon {
+                            icon-color: btn-start.has-hover ? white : Palette.text;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                    }
+                    btn-back := DeckButton {
+                        enabled-state: root.has-selection;
+                        clicked => { root.step-frame(-1); }
+                        StepBackwardIcon {
+                            icon-color: btn-back.has-hover ? white : Palette.text;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                    }
                     PlayButton {
                         playing: root.playing;
                         enabled-state: root.has-selection;
                         clicked => { root.play-toggle(); }
                     }
-                    Text {
-                        text: root.playhead-text + "  /  " + (root.has-selection ? root.selected-duration : "00:00");
-                        color: Palette.text;
-                        font-size: Theme.font-sm;
-                        vertical-alignment: center;
-                        font-weight: 500;
+                    btn-fwd := DeckButton {
+                        enabled-state: root.has-selection;
+                        clicked => { root.step-frame(1); }
+                        StepForwardIcon {
+                            icon-color: btn-fwd.has-hover ? white : Palette.text;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                    }
+                    btn-end := DeckButton {
+                        enabled-state: root.has-selection;
+                        clicked => { root.jump-end(); }
+                        SkipEndIcon {
+                            icon-color: btn-end.has-hover ? white : Palette.text;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
                     }
                 }
 
-                Text {
-                    text: root.has-selection ? root.selected-resolution : "—";
-                    color: Palette.text-muted;
-                    font-size: Theme.font-sm;
-                    vertical-alignment: center;
+                // Metadata badge
+                Rectangle {
+                    background: Palette.surface-3;
+                    border-radius: Theme.radius-sm;
+                    height: 24px;
+                    width: self.preferred-width + 12px;
+                    y: (parent.height - self.height) / 2;
+                    Text {
+                        text: root.has-selection ? root.selected-resolution : "—";
+                        color: Palette.text-muted;
+                        font-size: Theme.font-xs;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
                 }
             }
         }

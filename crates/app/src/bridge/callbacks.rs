@@ -283,6 +283,24 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         window.on_toggle_track_lock(move |idx| on_toggle_track_lock(weak.clone(), tracks.clone(), idx));
     }
     {
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let zoom = state.zoom.clone();
+        let undo = state.undo.clone();
+        window.on_selected_clip_volume_changed(move |vol| {
+            on_selected_clip_volume_changed(weak.clone(), pl.clone(), zoom.clone(), undo.clone(), vol);
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let zoom = state.zoom.clone();
+        let undo = state.undo.clone();
+        window.on_selected_clip_muted_changed(move |muted| {
+            on_selected_clip_muted_changed(weak.clone(), pl.clone(), zoom.clone(), undo.clone(), muted);
+        });
+    }
+    {
         let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
@@ -438,7 +456,7 @@ fn select_and_open(
     clip_id: Uuid,
     initial_seek_us: Option<i64>,
 ) {
-    let (path, name, codec, resolution, duration, fps, trim_in_us, trim_out_us) = {
+    let (path, name, codec, resolution, duration, fps, trim_in_us, trim_out_us, volume, muted) = {
         let pl = playlist.lock().expect("playlist mutex poisoned");
         let Some(clip) = pl.clips().iter().find(|c| c.id == clip_id) else {
             return;
@@ -466,6 +484,8 @@ fn select_and_open(
             format!("{:.2}", clip.info.profile.frame_rate_mhz as f64 / 1000.0),
             clip.trim_in_us(),
             clip.trim_out_us(),
+            clip.volume,
+            clip.muted,
         )
     };
 
@@ -487,6 +507,8 @@ fn select_and_open(
         window.set_selected_resolution(SharedString::from(resolution));
         window.set_selected_duration(SharedString::from(duration));
         window.set_selected_fps(SharedString::from(fps));
+        window.set_selected_volume(volume);
+        window.set_selected_muted(muted);
         window.set_playhead_text(SharedString::from("0:00"));
         window.set_playing(false);
     }
@@ -1282,5 +1304,59 @@ fn pick_output_path(starting_dir: Option<&std::path::Path>) -> Option<PathBuf> {
         dialog = dialog.set_directory(dir);
     }
     dialog.save_file()
+}
+
+fn on_selected_clip_volume_changed(
+    weak: Weak<AppWindow>,
+    playlist: SharedPlaylist,
+    zoom: SharedZoom,
+    undo: SharedUndo,
+    volume: f32,
+) {
+    if let Some(window) = weak.upgrade() {
+        let sel_id = window.get_selected_id();
+        let Ok(uuid) = Uuid::parse_str(sel_id.as_str()) else { return; };
+        {
+            let mut pl = playlist.lock().expect("playlist mutex poisoned");
+            if let Ok(mut u) = undo.lock() {
+                u.checkpoint(&pl);
+            }
+            if let Some(c) = pl.clips_mut().iter_mut().find(|clip| clip.id == uuid) {
+                c.volume = volume;
+            }
+        }
+        if let Ok(pl) = playlist.lock() {
+            models::sync_clips(&window, &pl);
+            let z = *zoom.lock().expect("zoom mutex poisoned");
+            timeline_view::refresh_ruler(&window, &pl, z);
+        }
+    }
+}
+
+fn on_selected_clip_muted_changed(
+    weak: Weak<AppWindow>,
+    playlist: SharedPlaylist,
+    zoom: SharedZoom,
+    undo: SharedUndo,
+    muted: bool,
+) {
+    if let Some(window) = weak.upgrade() {
+        let sel_id = window.get_selected_id();
+        let Ok(uuid) = Uuid::parse_str(sel_id.as_str()) else { return; };
+        {
+            let mut pl = playlist.lock().expect("playlist mutex poisoned");
+            if let Ok(mut u) = undo.lock() {
+                u.checkpoint(&pl);
+            }
+            if let Some(c) = pl.clips_mut().iter_mut().find(|clip| clip.id == uuid) {
+                c.muted = muted;
+            }
+        }
+        if let Ok(pl) = playlist.lock() {
+            models::sync_clips(&window, &pl);
+            let z = *zoom.lock().expect("zoom mutex poisoned");
+            timeline_view::refresh_ruler(&window, &pl, z);
+        }
+    }
 }
 

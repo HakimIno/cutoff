@@ -1,0 +1,112 @@
+import { Palette } from "../styles/palette.slint";
+
+export component PlayIcon inherits Path {
+    in property <color> icon-color: Palette.text;
+    fill: root.icon-color;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    commands: "M 4 2 L 13 8 L 4 14 Z";
+}
+
+export component PauseIcon inherits Path {
+    in property <color> icon-color: Palette.text;
+    fill: root.icon-color;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    commands: "M 3 2 H 6 V 14 H 3 Z M 10 2 H 13 V 14 H 10 Z";
+}
+
+export component SkipStartIcon inherits Path {
+    in property <color> icon-color: Palette.text;
+    fill: root.icon-color;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    commands: "M 2 2 H 4 V 14 H 2 Z M 13 2 L 5 8 L 13 14 Z";
+}
+
+export component SkipEndIcon inherits Path {
+    in property <color> icon-color: Palette.text;
+    fill: root.icon-color;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    commands: "M 3 2 L 11 8 L 3 14 Z M 12 2 H 14 V 14 H 12 Z";
+}
+
+export component StepBackwardIcon inherits Path {
+    in property <color> icon-color: Palette.text;
+    fill: root.icon-color;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    commands: "M 11 2 L 4 8 L 11 14 Z";
+}
+
+export component StepForwardIcon inherits Path {
+    in property <color> icon-color: Palette.text;
+    fill: root.icon-color;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    commands: "M 5 2 L 12 8 L 5 14 Z";
+}
+
+export component CloseIcon inherits Path {
+    in property <color> icon-color: Palette.text;
+    stroke: root.icon-color;
+    stroke-width: 2px;
+    width: 10px;
+    height: 10px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    commands: "M 2 2 L 14 14 M 14 2 L 2 14";
+}
+
+export component SpeakerIcon inherits Path {
+    in property <color> icon-color: Palette.text;
+    fill: root.icon-color;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    commands: "M 2 5 H 5 L 9 1 V 15 L 5 11 H 2 Z M 11 5 A 4 4 0 0 1 11 11";
+}
+
+export component SpeakerMutedIcon inherits Path {
+    in property <color> icon-color: Palette.text;
+    fill: root.icon-color;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    commands: "M 2 5 H 5 L 9 1 V 15 L 5 11 H 2 Z M 11 5 L 15 9 M 15 5 L 11 9";
+}
+
+export component LockClosedIcon inherits Path {
+    in property <color> icon-color: Palette.text;
+    fill: root.icon-color;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    commands: "M 3 6 H 13 V 14 H 3 Z M 5 6 V 4 A 3 3 0 0 1 11 4 V 6";
+}
+
+export component LockOpenIcon inherits Path {
+    in property <color> icon-color: Palette.text;
+    fill: root.icon-color;
+    width: 12px;
+    height: 12px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    commands: "M 3 6 H 13 V 14 H 3 Z M 5 6 V 4 A 3 3 0 0 1 11 4 V 4";
+}

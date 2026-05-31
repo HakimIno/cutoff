@@ -5,7 +5,7 @@ component InfoRow inherits Rectangle {
     in property <string> label;
     in property <string> value;
     in property <color> value-color: Palette.text;
-    height: 26px;
+    height: 24px;
 
     HorizontalLayout {
         alignment: space-between;
@@ -19,7 +19,7 @@ component InfoRow inherits Rectangle {
         Text {
             text: root.value == "" ? "—" : root.value;
             color: root.value-color;
-            font-size: Theme.font-sm;
+            font-size: Theme.font-xs;
             font-weight: 600;
             horizontal-alignment: right;
             vertical-alignment: center;
@@ -31,7 +31,189 @@ component InfoRow inherits Rectangle {
         x: 0; y: parent.height - 1px;
         width: 100%; height: 1px;
         background: Palette.border;
-        opacity: 0.4;
+        opacity: 0.3;
+    }
+}
+
+component StudioSlider inherits Rectangle {
+    in property <string> label;
+    in-out property <float> value: 1.0; // 0.0 to 2.0
+    in property <string> unit: "";
+    in property <float> max-val: 2.0;
+    callback changed(float);
+
+    height: 28px;
+
+    HorizontalLayout {
+        spacing: Theme.spacing-md;
+        Text {
+            text: root.label;
+            color: Palette.text-muted;
+            width: 72px;
+            font-size: Theme.font-xs;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        // Slider Track
+        Rectangle {
+            horizontal-stretch: 1;
+            height: 4px;
+            background: Palette.border;
+            border-radius: 2px;
+            y: (parent.height - self.height) / 2;
+
+            // Fill Track
+            Rectangle {
+                x: 0;
+                width: parent.width * (root.value / root.max-val);
+                height: 100%;
+                background: Palette.accent;
+                border-radius: 2px;
+            }
+
+            // Handle
+            handle := Rectangle {
+                x: (parent.width - self.width) * (root.value / root.max-val);
+                width: 10px; height: 10px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 5px;
+                background: ta.has-hover ? white : Palette.text;
+                border-width: 1px;
+                border-color: Palette.border-bright;
+
+                ta := TouchArea {
+                    moved => {
+                        if (self.pressed) {
+                            let fraction = max(0.0, min(1.0, (self.mouse-x - self.pressed-x + handle.x) / parent.width));
+                            let new-val = fraction * root.max-val;
+                            root.value = new-val;
+                            root.changed(new-val);
+                        }
+                    }
+                }
+            }
+        }
+        // Text display of value
+        Text {
+            text: Math.round(root.value * 100) + root.unit;
+            color: Palette.text;
+            width: 38px;
+            horizontal-alignment: right;
+            font-size: Theme.font-xs;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component StudioToggle inherits Rectangle {
+    in property <string> label;
+    in-out property <bool> checked;
+    callback toggled(bool);
+
+    height: 24px;
+
+    HorizontalLayout {
+        spacing: Theme.spacing-md;
+        Text {
+            text: root.label;
+            color: Palette.text-muted;
+            width: 72px;
+            font-size: Theme.font-xs;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        // Toggle Box
+        TouchArea {
+            clicked => {
+                root.checked = !root.checked;
+                root.toggled(root.checked);
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Rectangle {
+                    width: 16px; height: 16px;
+                    border-radius: Theme.radius-sm;
+                    border-width: 1px;
+                    border-color: root.checked ? Palette.danger : Palette.border;
+                    background: root.checked ? Palette.danger : Palette.surface-3;
+                    y: (parent.height - self.height) / 2;
+                    animate background { duration: 100ms; }
+                    animate border-color { duration: 100ms; }
+
+                    if root.checked : Text {
+                        text: "✓";
+                        color: white;
+                        font-size: 10px;
+                        font-weight: 900;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                Text {
+                    text: root.checked ? "Muted" : "Active";
+                    color: root.checked ? Palette.danger : Palette.text;
+                    font-size: Theme.font-xs;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+component CollapsibleSection inherits Rectangle {
+    in property <string> title;
+    in-out property <bool> expanded: true;
+
+    height: self.expanded ? self.preferred-height : 32px;
+    background: transparent;
+
+    VerticalLayout {
+        spacing: 0px;
+        alignment: start;
+
+        // Header bar
+        Rectangle {
+            height: 32px;
+            background: Palette.surface-2;
+            border-radius: Theme.radius-sm;
+
+            TouchArea {
+                clicked => { root.expanded = !root.expanded; }
+                HorizontalLayout {
+                    padding-left: Theme.spacing-md;
+                    padding-right: Theme.spacing-md;
+                    spacing: Theme.spacing-sm;
+                    alignment: space-between;
+
+                    Text {
+                        text: root.title;
+                        color: Palette.text;
+                        font-size: Theme.font-xs;
+                        font-weight: 700;
+                        letter-spacing: 0.5px;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.expanded ? "▼" : "▶";
+                        color: Palette.text-muted;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // Content Area
+        VerticalLayout {
+            visible: root.expanded;
+            height: root.expanded ? self.preferred-height : 0px;
+            padding-top: Theme.spacing-md;
+            padding-bottom: Theme.spacing-md;
+            @children
+        }
     }
 }
 
@@ -43,7 +225,13 @@ export component DetailsPanel inherits Rectangle {
     in property <string> selected-duration;
     in property <string> selected-fps;
 
-    width: 240px;
+    in property <float> selected-volume: 1.0;
+    in property <bool> selected-muted: false;
+
+    callback volume-changed(float);
+    callback muted-changed(bool);
+
+    width: 260px;
     background: Palette.surface;
 
     Rectangle {
@@ -58,7 +246,7 @@ export component DetailsPanel inherits Rectangle {
         alignment: start;
 
         Text {
-            text: "CLIP DETAILS";
+            text: "PRO INSPECTOR";
             color: Palette.text-muted;
             font-size: Theme.font-xs;
             letter-spacing: 1.5px;
@@ -74,7 +262,7 @@ export component DetailsPanel inherits Rectangle {
                 font-size: Theme.font-sm;
             }
             Text {
-                text: "Click a clip in the timeline to inspect it.";
+                text: "Select a clip in the timeline to customize composite, audio, and details.";
                 color: Palette.text-dim;
                 font-size: Theme.font-xs;
                 wrap: word-wrap;
@@ -82,12 +270,115 @@ export component DetailsPanel inherits Rectangle {
         }
 
         if root.has-selection : VerticalLayout {
-            spacing: 0px;
-            InfoRow { label: "NAME";       value: root.selected-name; }
-            InfoRow { label: "CODEC";      value: root.selected-codec; }
-            InfoRow { label: "RESOLUTION"; value: root.selected-resolution; }
-            InfoRow { label: "DURATION";   value: root.selected-duration; }
-            InfoRow { label: "FRAME RATE"; value: root.selected-fps; }
+            spacing: Theme.spacing-md;
+
+            // Clip Name
+            Text {
+                text: root.selected-name;
+                color: Palette.text;
+                font-size: Theme.font-sm;
+                font-weight: 700;
+                overflow: elide;
+                wrap: word-wrap;
+            }
+
+            // Transform Section (Placeholders for UI completeness)
+            CollapsibleSection {
+                title: "COMPOSITING & TRANSFORM";
+                expanded: true;
+                VerticalLayout {
+                    spacing: 8px;
+                    padding-left: Theme.spacing-sm;
+                    padding-right: Theme.spacing-sm;
+                    StudioSlider {
+                        label: "Opacity";
+                        value: 1.0;
+                        max-val: 1.0;
+                        unit: "%";
+                    }
+                    StudioSlider {
+                        label: "Scale";
+                        value: 1.0;
+                        max-val: 2.0;
+                        unit: "%";
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.spacing-sm;
+                        Text {
+                            text: "Position";
+                            color: Palette.text-muted;
+                            font-size: Theme.font-xs;
+                            font-weight: 600;
+                            width: 72px;
+                            vertical-alignment: center;
+                        }
+                        Rectangle {
+                            background: Palette.surface-2;
+                            border-radius: Theme.radius-sm;
+                            height: 24px;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: "X: 0 px";
+                                color: Palette.text-dim;
+                                font-size: Theme.font-xs;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        Rectangle {
+                            background: Palette.surface-2;
+                            border-radius: Theme.radius-sm;
+                            height: 24px;
+                            horizontal-stretch: 1;
+                            Text {
+                                text: "Y: 0 px";
+                                color: Palette.text-dim;
+                                font-size: Theme.font-xs;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Audio Section (Interactive)
+            CollapsibleSection {
+                title: "AUDIO SETTINGS";
+                expanded: true;
+                VerticalLayout {
+                    spacing: 8px;
+                    padding-left: Theme.spacing-sm;
+                    padding-right: Theme.spacing-sm;
+                    StudioSlider {
+                        label: "Volume";
+                        value: root.selected-volume;
+                        max-val: 2.0;
+                        unit: "%";
+                        changed(v) => { root.volume-changed(v); }
+                    }
+                    StudioToggle {
+                        label: "Mute Clip";
+                        checked: root.selected-muted;
+                        toggled(m) => { root.muted-changed(m); }
+                    }
+                }
+            }
+
+            // Info Section (Read-only Metadata)
+            CollapsibleSection {
+                title: "CLIP FILE INFO";
+                expanded: false;
+                VerticalLayout {
+                    spacing: 4px;
+                    padding-left: Theme.spacing-sm;
+                    padding-right: Theme.spacing-sm;
+                    InfoRow { label: "CODEC";      value: root.selected-codec; }
+                    InfoRow { label: "RESOLUTION"; value: root.selected-resolution; }
+                    InfoRow { label: "DURATION";   value: root.selected-duration; }
+                    InfoRow { label: "FRAME RATE"; value: root.selected-fps; }
+                }
+            }
         }
     }
 }

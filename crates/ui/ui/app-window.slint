@@ -45,6 +45,8 @@ export component AppWindow inherits Window {
     in property <string> selected-resolution;
     in property <string> selected-duration;
     in property <string> selected-fps;
+    in property <float> selected-volume;
+    in property <bool> selected-muted;
 
     // Aggregate stats
     in property <int> clip-count;
@@ -111,6 +113,8 @@ export component AppWindow inherits Window {
     callback toggle-track-mute(int);
     callback toggle-track-solo(int);
     callback toggle-track-lock(int);
+    callback selected-clip-volume-changed(float);
+    callback selected-clip-muted-changed(bool);
 
     in property <bool> master-muted;
 
@@ -203,11 +207,14 @@ export component AppWindow inherits Window {
                 vertical-stretch: 1;
 
                 Sidebar {
+                    clips: root.clips;
                     clip-count: root.clip-count;
                     total-duration: root.total-duration;
                     merge-strategy: root.merge-strategy;
                     quality-label: root.quality-label;
                     add-clicked => { root.browse-clicked(); }
+                    clip-selected(id) => { root.clip-selected(id); }
+                    remove-clicked(id) => { root.remove-clicked(id); }
                 }
 
                 // Main center column
@@ -229,6 +236,9 @@ export component AppWindow inherits Window {
                                 frame: root.preview-frame;
                                 playing: root.playing;
                                 play-toggle => { root.play-toggle(); }
+                                step-frame(delta) => { root.step-frame(delta); }
+                                jump-start => { root.jump-start(); }
+                                jump-end => { root.jump-end(); }
                             }
                         }
                     }
@@ -294,6 +304,10 @@ export component AppWindow inherits Window {
                     selected-resolution: root.selected-resolution;
                     selected-duration: root.selected-duration;
                     selected-fps: root.selected-fps;
+                    selected-volume: root.selected-volume;
+                    selected-muted: root.selected-muted;
+                    volume-changed(v) => { root.selected-clip-volume-changed(v); }
+                    muted-changed(m) => { root.selected-clip-muted-changed(m); }
                 }
             }
 
