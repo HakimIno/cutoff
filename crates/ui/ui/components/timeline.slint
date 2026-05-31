@@ -30,6 +30,9 @@ export component Timeline inherits Rectangle {
     callback drag-started(int);
     callback drag-moved(int, length);
     callback drag-released(int, length);
+    callback trim-released(string, bool, length);
+    callback request-split(string);
+    callback reveal-in-finder(string);
 
     background: Palette.background;
 
@@ -163,6 +166,9 @@ export component Timeline inherits Rectangle {
                                 drag-started(i) => { root.drag-started(i); }
                                 drag-moved(i, dx) => { root.drag-moved(i, dx); }
                                 drag-released(i, dx) => { root.drag-released(i, dx); }
+                                trim-released(id, right, dx) => { root.trim-released(id, right, dx); }
+                                request-split(id) => { root.request-split(id); }
+                                reveal-in-finder(id) => { root.reveal-in-finder(id); }
                             }
                         }
 

@@ -18,12 +18,12 @@ impl From<&Clip> for ClipRow {
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default(),
-            duration: format_duration(clip.info.duration),
+            duration: format_duration(clip.effective_duration()),
             resolution: format!(
                 "{}x{}",
                 clip.info.profile.resolution.width, clip.info.profile.resolution.height
             ),
-            duration_secs: clip.info.duration.as_secs_f32(),
+            duration_secs: clip.effective_duration().as_secs_f32(),
         }
     }
 }

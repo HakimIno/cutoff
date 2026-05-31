@@ -80,6 +80,7 @@ fn main() -> Result<()> {
         storage,
         preview: Arc::new(Mutex::new(Default::default())),
         zoom: Arc::new(Mutex::new(bridge::ZOOM_DEFAULT)),
+        undo: Arc::new(Mutex::new(bridge::undo::UndoStack::new())),
     };
 
     window.set_px_per_sec(bridge::ZOOM_DEFAULT);

@@ -58,6 +58,11 @@ export component AppWindow inherits Window {
     in property <int> drop-target-index: -1;
     in property <length> drop-indicator-x: 0px;
 
+    // Toast + FPS readout
+    in property <string> toast-message;
+    in property <bool> toast-visible;
+    in property <float> preview-fps;
+
     // Callbacks
     callback browse-clicked();
     callback export-clicked();
@@ -73,11 +78,43 @@ export component AppWindow inherits Window {
     callback drag-started(int);
     callback drag-moved(int, length);
     callback drag-released(int, length);
+    callback trim-released(string, bool, length);
+    callback split();
+    callback ripple-delete();
+    callback step-frame(int);
+    callback set-in();
+    callback set-out();
+    callback undo();
+    callback redo();
+    callback save-project();
+    callback load-project();
+    callback dismiss-toast();
+    callback reveal-in-finder(string);
 
     forward-focus: key-handler;
 
     key-handler := FocusScope {
         key-pressed(event) => {
+            // Meta (Cmd on macOS) or Control (Win/Linux) shortcuts first
+            // so they don't get shadowed by the bare letter handlers below.
+            if (event.modifiers.meta || event.modifiers.control) {
+                if (event.text == "z" || event.text == "Z") {
+                    if (event.modifiers.shift) {
+                        root.redo();
+                    } else {
+                        root.undo();
+                    }
+                    return accept;
+                }
+                if (event.text == "s" || event.text == "S") {
+                    root.save-project();
+                    return accept;
+                }
+                if (event.text == "o" || event.text == "O") {
+                    root.load-project();
+                    return accept;
+                }
+            }
             if (event.text == " ") {
                 root.play-toggle();
                 return accept;
@@ -96,6 +133,34 @@ export component AppWindow inherits Window {
             }
             if (event.text == Key.End) {
                 root.jump-end();
+                return accept;
+            }
+            if (event.text == "s" || event.text == "S") {
+                root.split();
+                return accept;
+            }
+            if (event.text == Key.Delete || event.text == Key.Backspace) {
+                root.ripple-delete();
+                return accept;
+            }
+            if (event.text == "j" || event.text == "J") {
+                root.step-frame(-1);
+                return accept;
+            }
+            if (event.text == "k" || event.text == "K") {
+                root.play-toggle();
+                return accept;
+            }
+            if (event.text == "l" || event.text == "L") {
+                root.step-frame(1);
+                return accept;
+            }
+            if (event.text == "i" || event.text == "I") {
+                root.set-in();
+                return accept;
+            }
+            if (event.text == "o" || event.text == "O") {
+                root.set-out();
                 return accept;
             }
             return reject;
@@ -166,6 +231,13 @@ export component AppWindow inherits Window {
                             drag-started(i) => { root.drag-started(i); }
                             drag-moved(i, dx) => { root.drag-moved(i, dx); }
                             drag-released(i, dx) => { root.drag-released(i, dx); }
+                            trim-released(id, right, dx) => { root.trim-released(id, right, dx); }
+                            request-split(id) => {
+                                // Context-menu Split selects the clip first then splits at playhead.
+                                root.clip-selected(id);
+                                root.split();
+                            }
+                            reveal-in-finder(id) => { root.reveal-in-finder(id); }
                         }
                     }
                 }
@@ -185,8 +257,50 @@ export component AppWindow inherits Window {
                 progress: root.export-progress;
                 exporting: root.exporting;
                 can-export: root.can-export;
+                preview-fps: root.preview-fps;
+                playing: root.playing;
                 export-clicked => { root.export-clicked(); }
                 cancel-clicked => { root.cancel-clicked(); }
+            }
+        }
+
+        // Toast overlay — bottom-right, click to dismiss.
+        if root.toast-visible : Rectangle {
+            x: root.width - self.width - 16px;
+            y: root.height - self.height - 90px;
+            width: 360px;
+            height: toast-text.preferred-height + 24px;
+            background: Palette.surface-3;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: Palette.danger;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #00000088;
+
+            HorizontalLayout {
+                padding: 12px;
+                spacing: 10px;
+                alignment: start;
+
+                Rectangle {
+                    width: 4px; height: parent.height - 24px;
+                    background: Palette.danger;
+                    border-radius: 2px;
+                }
+
+                toast-text := Text {
+                    text: root.toast-message;
+                    color: Palette.text;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                }
+            }
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.dismiss-toast(); }
             }
         }
     }

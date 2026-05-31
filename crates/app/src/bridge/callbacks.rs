@@ -3,15 +3,16 @@ use std::path::PathBuf;
 use slint::{ComponentHandle, SharedString, Weak};
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use video_merger_core::domain::{ContainerFormat, ExportSpec, Quality};
-use video_merger_core::services::MergePlanner;
+use video_merger_core::domain::{ContainerFormat, ExportSpec, Playlist, Quality};
+use video_merger_core::services::{self, MergePlanner, TrimSide};
+use video_merger_persistence::Project;
 use video_merger_ui::AppWindow;
 use video_merger_worker::Command;
 
 use super::{models, timeline_view};
 use super::{
     ActiveJob, BridgeState, JobMeta, JobMetaMap, SharedConfig, SharedPlaylist, SharedPreview,
-    SharedZoom, ZOOM_MAX, ZOOM_MIN,
+    SharedUndo, SharedZoom, ZOOM_DEFAULT, ZOOM_MAX, ZOOM_MIN,
 };
 
 const DROP_TARGET_NONE: i32 = -1;
@@ -26,8 +27,9 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let zoom = state.zoom.clone();
+        let undo = state.undo.clone();
         window.on_remove_clicked(move |id| {
-            on_remove(weak.clone(), pl.clone(), zoom.clone(), id)
+            on_remove(weak.clone(), pl.clone(), zoom.clone(), undo.clone(), id)
         });
     }
     {
@@ -46,8 +48,9 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let zoom = state.zoom.clone();
+        let undo = state.undo.clone();
         window.on_drag_released(move |idx, dx| {
-            on_drag_released(weak.clone(), pl.clone(), zoom.clone(), idx, dx)
+            on_drag_released(weak.clone(), pl.clone(), zoom.clone(), undo.clone(), idx, dx)
         });
     }
     {
@@ -96,6 +99,151 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let tx = cmd_tx.clone();
         let pv = state.preview.clone();
         window.on_jump_end(move || on_jump(tx.clone(), pv.clone(), JumpTo::End));
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let pv = state.preview.clone();
+        let zoom = state.zoom.clone();
+        let undo = state.undo.clone();
+        window.on_trim_released(move |id, is_right, dx_px| {
+            on_trim_released(
+                weak.clone(),
+                tx.clone(),
+                pl.clone(),
+                pv.clone(),
+                zoom.clone(),
+                undo.clone(),
+                id,
+                is_right,
+                dx_px,
+            )
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let pv = state.preview.clone();
+        let zoom = state.zoom.clone();
+        let undo = state.undo.clone();
+        window.on_split(move || {
+            on_split(
+                weak.clone(),
+                tx.clone(),
+                pl.clone(),
+                pv.clone(),
+                zoom.clone(),
+                undo.clone(),
+            )
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let pv = state.preview.clone();
+        let zoom = state.zoom.clone();
+        let undo = state.undo.clone();
+        window.on_ripple_delete(move || {
+            on_ripple_delete(weak.clone(), pl.clone(), pv.clone(), zoom.clone(), undo.clone())
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let pl = state.playlist.clone();
+        let pv = state.preview.clone();
+        window.on_step_frame(move |delta| {
+            on_step_frame(tx.clone(), pl.clone(), pv.clone(), delta)
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let pv = state.preview.clone();
+        let zoom = state.zoom.clone();
+        let undo = state.undo.clone();
+        window.on_set_in(move || {
+            on_set_inout(
+                weak.clone(),
+                tx.clone(),
+                pl.clone(),
+                pv.clone(),
+                zoom.clone(),
+                undo.clone(),
+                TrimSide::Left,
+            )
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let pv = state.preview.clone();
+        let zoom = state.zoom.clone();
+        let undo = state.undo.clone();
+        window.on_set_out(move || {
+            on_set_inout(
+                weak.clone(),
+                tx.clone(),
+                pl.clone(),
+                pv.clone(),
+                zoom.clone(),
+                undo.clone(),
+                TrimSide::Right,
+            )
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let pv = state.preview.clone();
+        let zoom = state.zoom.clone();
+        let undo = state.undo.clone();
+        window.on_undo(move || on_undo(weak.clone(), pl.clone(), pv.clone(), zoom.clone(), undo.clone()));
+    }
+    {
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let pv = state.preview.clone();
+        let zoom = state.zoom.clone();
+        let undo = state.undo.clone();
+        window.on_redo(move || on_redo(weak.clone(), pl.clone(), pv.clone(), zoom.clone(), undo.clone()));
+    }
+    {
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let zoom = state.zoom.clone();
+        window.on_save_project(move || on_save_project(weak.clone(), pl.clone(), zoom.clone()));
+    }
+    {
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let pv = state.preview.clone();
+        let zoom = state.zoom.clone();
+        let undo = state.undo.clone();
+        window.on_load_project(move || {
+            on_load_project(
+                weak.clone(),
+                pl.clone(),
+                pv.clone(),
+                zoom.clone(),
+                undo.clone(),
+            )
+        });
+    }
+    {
+        let weak = window.as_weak();
+        window.on_dismiss_toast(move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_toast_visible(false);
+            }
+        });
+    }
+    {
+        let pl = state.playlist.clone();
+        window.on_reveal_in_finder(move |id| on_reveal_in_finder(pl.clone(), id));
     }
     {
         let tx = cmd_tx.clone();
@@ -154,6 +302,7 @@ fn on_remove(
     weak: Weak<AppWindow>,
     playlist: SharedPlaylist,
     zoom: SharedZoom,
+    undo: SharedUndo,
     id: SharedString,
 ) {
     let Ok(uuid) = Uuid::parse_str(id.as_str()) else {
@@ -162,6 +311,7 @@ fn on_remove(
     };
 
     let mut pl = playlist.lock().expect("playlist mutex poisoned");
+    checkpoint(&undo, &pl);
     if let Err(err) = pl.remove(uuid) {
         tracing::warn!(error = %err, "remove failed");
         return;
@@ -208,6 +358,7 @@ fn on_drag_released(
     weak: Weak<AppWindow>,
     playlist: SharedPlaylist,
     zoom: SharedZoom,
+    undo: SharedUndo,
     idx: i32,
     delta_px: f32,
 ) {
@@ -226,6 +377,7 @@ fn on_drag_released(
         return;
     };
     let Some(to) = reorder_to else { return };
+    checkpoint(&undo, &pl);
     if let Err(err) = pl.reorder(idx as usize, to) {
         tracing::warn!(error = %err, "reorder failed");
         return;
@@ -283,6 +435,7 @@ fn select_and_open(
         pv.duration_us = 0;
         pv.playing = false;
         pv.pending_seek_us = initial_seek_us;
+        pv.frame_history.clear();
     }
 
     if let Some(window) = weak.upgrade() {
@@ -318,6 +471,9 @@ fn on_play_toggle(
             return;
         }
         pv.playing = !pv.playing;
+        if !pv.playing {
+            pv.frame_history.clear();
+        }
         pv.playing
     };
 
@@ -331,6 +487,9 @@ fn on_play_toggle(
     }
     if let Some(window) = weak.upgrade() {
         window.set_playing(should_play);
+        if !should_play {
+            window.set_preview_fps(0.0);
+        }
     }
 }
 
@@ -391,6 +550,366 @@ fn on_jump(cmd_tx: mpsc::Sender<Command>, preview: SharedPreview, target: JumpTo
     };
     if let Err(err) = cmd_tx.try_send(Command::SeekPreview { pts_us }) {
         tracing::warn!(error = %err, "jump seek failed");
+    }
+}
+
+fn on_trim_released(
+    weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
+    preview: SharedPreview,
+    zoom: SharedZoom,
+    undo: SharedUndo,
+    id: SharedString,
+    is_right: bool,
+    delta_px: f32,
+) {
+    let Ok(uuid) = Uuid::parse_str(id.as_str()) else { return };
+    if delta_px.abs() < 1.0 {
+        return;
+    }
+    let zoom_val = *zoom.lock().expect("zoom mutex poisoned");
+    if zoom_val <= 0.0 {
+        return;
+    }
+    let delta_us = (delta_px as f64 / zoom_val as f64 * 1_000_000.0) as i64;
+
+    let side = if is_right { TrimSide::Right } else { TrimSide::Left };
+    let new_source_us = {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        let Some(clip) = pl.clips().iter().find(|c| c.id == uuid) else {
+            return;
+        };
+        if is_right {
+            clip.trim_out_us() + delta_us
+        } else {
+            clip.trim_in_us() + delta_us
+        }
+    };
+
+    {
+        let mut pl = playlist.lock().expect("playlist mutex poisoned");
+        checkpoint(&undo, &pl);
+        if let Err(err) = services::trim(&mut pl, uuid, side, new_source_us) {
+            tracing::warn!(error = %err, "trim failed");
+            return;
+        }
+    }
+
+    if let Some(window) = weak.upgrade() {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        models::sync_clips(&window, &pl);
+        timeline_view::refresh_ruler(&window, &pl, zoom_val);
+    }
+    // Re-open preview with the new bounds so playback respects the trim.
+    select_and_open(weak, cmd_tx, playlist, preview, uuid, None);
+}
+
+fn on_split(
+    weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
+    preview: SharedPreview,
+    zoom: SharedZoom,
+    undo: SharedUndo,
+) {
+    let (clip_id, local_us) = {
+        let pv = preview.lock().expect("preview mutex poisoned");
+        let Some(id) = pv.clip_id else { return };
+        (id, pv.playhead_us)
+    };
+    if local_us <= 0 {
+        return;
+    }
+    {
+        let mut pl = playlist.lock().expect("playlist mutex poisoned");
+        checkpoint(&undo, &pl);
+        if let Err(err) = services::split_at(&mut pl, clip_id, local_us) {
+            tracing::warn!(error = %err, "split failed");
+            return;
+        }
+    }
+    if let Some(window) = weak.upgrade() {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        let z = *zoom.lock().expect("zoom mutex poisoned");
+        models::sync_clips(&window, &pl);
+        timeline_view::refresh_ruler(&window, &pl, z);
+    }
+    // Left half retains the original id; re-select it to reset preview bounds.
+    select_and_open(weak, cmd_tx, playlist, preview, clip_id, None);
+}
+
+fn on_ripple_delete(
+    weak: Weak<AppWindow>,
+    playlist: SharedPlaylist,
+    preview: SharedPreview,
+    zoom: SharedZoom,
+    undo: SharedUndo,
+) {
+    let clip_id = {
+        let mut pv = preview.lock().expect("preview mutex poisoned");
+        let Some(id) = pv.clip_id else { return };
+        pv.clip_id = None;
+        pv.playhead_us = 0;
+        pv.duration_us = 0;
+        pv.playing = false;
+        id
+    };
+    {
+        let mut pl = playlist.lock().expect("playlist mutex poisoned");
+        checkpoint(&undo, &pl);
+        if let Err(err) = services::ripple_delete(&mut pl, clip_id) {
+            tracing::warn!(error = %err, "ripple-delete failed");
+            return;
+        }
+    }
+    if let Some(window) = weak.upgrade() {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        let z = *zoom.lock().expect("zoom mutex poisoned");
+        models::sync_clips(&window, &pl);
+        timeline_view::refresh_ruler(&window, &pl, z);
+        window.set_has_selection(false);
+        window.set_selected_id(SharedString::from(""));
+        window.set_playing(false);
+        window.set_playhead_fraction(0.0);
+        window.set_playhead_text(SharedString::from("0:00"));
+        window.set_status_text(SharedString::from(format!(
+            "{} clips in timeline",
+            pl.len()
+        )));
+    }
+}
+
+fn on_step_frame(
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
+    preview: SharedPreview,
+    delta: i32,
+) {
+    let (clip_id, current_us, max_us) = {
+        let pv = preview.lock().expect("preview mutex poisoned");
+        let Some(id) = pv.clip_id else { return };
+        (id, pv.playhead_us, pv.duration_us)
+    };
+    let frame_us = {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        pl.clips()
+            .iter()
+            .find(|c| c.id == clip_id)
+            .map(|c| {
+                // 1_000_000 us/sec / (frame_rate_mhz / 1000) fps = 1e9 / mhz µs/frame
+                let mhz = c.info.profile.frame_rate_mhz.max(1) as i64;
+                1_000_000_000 / mhz
+            })
+            .unwrap_or(33_333)
+    };
+    let target = (current_us + (delta as i64) * frame_us).clamp(0, max_us.max(0));
+    if let Err(err) = cmd_tx.try_send(Command::SeekPreview { pts_us: target }) {
+        tracing::warn!(error = %err, "step-frame seek failed");
+    }
+}
+
+fn on_set_inout(
+    weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
+    preview: SharedPreview,
+    zoom: SharedZoom,
+    undo: SharedUndo,
+    side: TrimSide,
+) {
+    let (clip_id, current_local_us) = {
+        let pv = preview.lock().expect("preview mutex poisoned");
+        let Some(id) = pv.clip_id else { return };
+        (id, pv.playhead_us)
+    };
+    let new_source_us = {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        let Some(clip) = pl.clips().iter().find(|c| c.id == clip_id) else {
+            return;
+        };
+        clip.trim_in_us() + current_local_us
+    };
+    {
+        let mut pl = playlist.lock().expect("playlist mutex poisoned");
+        checkpoint(&undo, &pl);
+        if let Err(err) = services::trim(&mut pl, clip_id, side, new_source_us) {
+            tracing::warn!(error = %err, "set-in/out failed");
+            return;
+        }
+    }
+    let z = *zoom.lock().expect("zoom mutex poisoned");
+    if let Some(window) = weak.upgrade() {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        models::sync_clips(&window, &pl);
+        timeline_view::refresh_ruler(&window, &pl, z);
+    }
+    select_and_open(weak, cmd_tx, playlist, preview, clip_id, None);
+}
+
+/// Push the current playlist onto the undo stack before a mutation.
+/// No-op if the stack mutex is poisoned (best-effort).
+fn checkpoint(undo: &SharedUndo, playlist: &Playlist) {
+    if let Ok(mut u) = undo.lock() {
+        u.checkpoint(playlist);
+    }
+}
+
+fn restore_playlist(
+    weak: Weak<AppWindow>,
+    playlist: SharedPlaylist,
+    preview: SharedPreview,
+    zoom: SharedZoom,
+    new_pl: Playlist,
+) {
+    {
+        let mut pl = playlist.lock().expect("playlist mutex poisoned");
+        *pl = new_pl;
+    }
+    // Selection may now point at a clip that no longer exists; clear it.
+    {
+        let mut pv = preview.lock().expect("preview mutex poisoned");
+        pv.clip_id = None;
+        pv.playhead_us = 0;
+        pv.duration_us = 0;
+        pv.playing = false;
+        pv.pending_seek_us = None;
+    }
+    if let Some(window) = weak.upgrade() {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        let z = *zoom.lock().expect("zoom mutex poisoned");
+        models::sync_clips(&window, &pl);
+        timeline_view::refresh_ruler(&window, &pl, z);
+        window.set_has_selection(false);
+        window.set_selected_id(SharedString::from(""));
+        window.set_playing(false);
+        window.set_playhead_fraction(0.0);
+        window.set_playhead_text(SharedString::from("0:00"));
+    }
+}
+
+fn on_undo(
+    weak: Weak<AppWindow>,
+    playlist: SharedPlaylist,
+    preview: SharedPreview,
+    zoom: SharedZoom,
+    undo: SharedUndo,
+) {
+    let prev = {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        let mut u = undo.lock().expect("undo mutex poisoned");
+        u.undo(&pl)
+    };
+    let Some(prev) = prev else { return };
+    restore_playlist(weak, playlist, preview, zoom, prev);
+}
+
+fn on_redo(
+    weak: Weak<AppWindow>,
+    playlist: SharedPlaylist,
+    preview: SharedPreview,
+    zoom: SharedZoom,
+    undo: SharedUndo,
+) {
+    let next = {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        let mut u = undo.lock().expect("undo mutex poisoned");
+        u.redo(&pl)
+    };
+    let Some(next) = next else { return };
+    restore_playlist(weak, playlist, preview, zoom, next);
+}
+
+fn on_save_project(weak: Weak<AppWindow>, playlist: SharedPlaylist, zoom: SharedZoom) {
+    let path = rfd::FileDialog::new()
+        .add_filter("Cutoff project", &["json"])
+        .set_title("Save project")
+        .set_file_name("project.cutoff.json")
+        .save_file();
+    let Some(path) = path else { return };
+
+    let project = {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        let z = *zoom.lock().expect("zoom mutex poisoned");
+        Project::new(pl.clone(), z)
+    };
+    if let Err(err) = project.save_to(&path) {
+        tracing::warn!(error = %err, ?path, "save project failed");
+        if let Some(window) = weak.upgrade() {
+            window.set_status_text(SharedString::from(format!("Save failed: {err}")));
+        }
+        return;
+    }
+    if let Some(window) = weak.upgrade() {
+        window.set_status_text(SharedString::from(format!(
+            "Saved: {}",
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default()
+        )));
+    }
+}
+
+fn on_load_project(
+    weak: Weak<AppWindow>,
+    playlist: SharedPlaylist,
+    preview: SharedPreview,
+    zoom: SharedZoom,
+    undo: SharedUndo,
+) {
+    let path = rfd::FileDialog::new()
+        .add_filter("Cutoff project", &["json"])
+        .set_title("Open project")
+        .pick_file();
+    let Some(path) = path else { return };
+
+    let project = match Project::load_from(&path) {
+        Ok(p) => p,
+        Err(err) => {
+            tracing::warn!(error = %err, ?path, "load project failed");
+            if let Some(window) = weak.upgrade() {
+                window.set_status_text(SharedString::from(format!("Load failed: {err}")));
+            }
+            return;
+        }
+    };
+    // Load is destructive of current state; reset undo so an immediate
+    // Cmd+Z doesn't surprise the user with a step into the pre-load past.
+    {
+        let mut u = undo.lock().expect("undo mutex poisoned");
+        u.clear();
+    }
+    {
+        let mut z = zoom.lock().expect("zoom mutex poisoned");
+        *z = if project.zoom_px_per_sec > 0.0 {
+            project.zoom_px_per_sec.clamp(ZOOM_MIN, ZOOM_MAX)
+        } else {
+            ZOOM_DEFAULT
+        };
+    }
+    restore_playlist(weak.clone(), playlist, preview, zoom, project.playlist);
+    if let Some(window) = weak.upgrade() {
+        window.set_status_text(SharedString::from(format!(
+            "Loaded: {}",
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default()
+        )));
+    }
+}
+
+fn on_reveal_in_finder(playlist: SharedPlaylist, id: SharedString) {
+    let Ok(uuid) = Uuid::parse_str(id.as_str()) else { return };
+    let path = {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        pl.clips()
+            .iter()
+            .find(|c| c.id == uuid)
+            .map(|c| c.path.clone())
+    };
+    let Some(path) = path else { return };
+    if let Err(err) = opener::reveal(&path) {
+        tracing::warn!(error = %err, ?path, "reveal in finder failed");
     }
 }
 

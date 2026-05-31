@@ -2,12 +2,14 @@
 
 pub mod config;
 pub mod history;
+pub mod project;
 pub mod storage;
 
 use thiserror::Error;
 
 pub use config::{AppConfig, Theme};
 pub use history::{ExportRecord, History};
+pub use project::{Project, CURRENT_VERSION as PROJECT_VERSION};
 pub use storage::Storage;
 
 #[derive(Debug, Error)]

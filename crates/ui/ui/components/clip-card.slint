@@ -45,6 +45,9 @@ export component ClipBlock inherits Rectangle {
     callback drag-started(int);
     callback drag-moved(int, length);
     callback drag-released(int, length);
+    callback trim-released(string, bool, length);  // (id, is_right_handle, delta_px)
+    callback request-split(string);
+    callback reveal-in-finder(string);
 
     width: max(min(self.px-per-sec * root.data.duration-secs, 800px), 120px);
     height: 104px;
@@ -143,6 +146,64 @@ export component ClipBlock inherits Rectangle {
                 dim: !drag-area.has-hover && !root.selected;
                 hover-color: Palette.danger;
                 clicked => { root.remove-clicked(root.data.id); }
+            }
+        }
+    }
+
+    // Trim handle: left edge
+    left-trim := TouchArea {
+        x: 0;
+        y: 0;
+        width: 6px;
+        height: parent.height;
+        mouse-cursor: ew-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.up && self.has-hover) {
+                root.trim-released(root.data.id, false, self.mouse-x - self.pressed-x);
+            }
+        }
+    }
+    // Visual cue on hover
+    if left-trim.has-hover || left-trim.pressed : Rectangle {
+        x: 0; y: 0;
+        width: 1px; height: parent.height;
+        background: white;
+    }
+
+    // Trim handle: right edge
+    right-trim := TouchArea {
+        x: parent.width - 6px;
+        y: 0;
+        width: 6px;
+        height: parent.height;
+        mouse-cursor: ew-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.up && self.has-hover) {
+                root.trim-released(root.data.id, true, self.mouse-x - self.pressed-x);
+            }
+        }
+    }
+    if right-trim.has-hover || right-trim.pressed : Rectangle {
+        x: parent.width - 1px; y: 0;
+        width: 1px; height: parent.height;
+        background: white;
+    }
+
+    // Right-click context menu (Split / Delete / Reveal in Finder).
+    ContextMenuArea {
+        Menu {
+            MenuItem {
+                title: "Split at playhead";
+                activated => { root.request-split(root.data.id); }
+            }
+            MenuItem {
+                title: "Delete clip";
+                activated => { root.remove-clicked(root.data.id); }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: "Reveal in Finder";
+                activated => { root.reveal-in-finder(root.data.id); }
             }
         }
     }

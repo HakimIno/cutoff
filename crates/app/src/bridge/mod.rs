@@ -4,6 +4,7 @@ mod callbacks;
 mod events;
 pub mod models;
 pub mod timeline_view;
+pub mod undo;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -24,6 +25,8 @@ pub type SharedHistory = Arc<Mutex<History>>;
 pub type SharedPreview = Arc<Mutex<PreviewState>>;
 pub type SharedZoom = Arc<Mutex<f32>>;
 
+pub use undo::SharedUndo;
+
 /// Metadata captured at export-submission time, looked up when the
 /// terminal event for that job arrives.
 #[derive(Debug, Clone)]
@@ -43,6 +46,9 @@ pub struct PreviewState {
     /// When set, applied as a `SeekPreview` on the next `PreviewOpened` event.
     /// Lets a single seek-fraction click both switch clips and seek inside the new one.
     pub pending_seek_us: Option<i64>,
+    /// Rolling FrameReady arrival timestamps for FPS calculation. Trimmed to
+    /// the last second on each push.
+    pub frame_history: std::collections::VecDeque<std::time::Instant>,
 }
 
 #[derive(Clone)]
@@ -55,6 +61,7 @@ pub struct BridgeState {
     pub storage: Arc<Storage>,
     pub preview: SharedPreview,
     pub zoom: SharedZoom,
+    pub undo: SharedUndo,
 }
 
 pub const ZOOM_MIN: f32 = 1.0;

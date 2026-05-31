@@ -48,6 +48,10 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             let name = data.name.clone();
             {
                 let mut pl = state.playlist.lock().expect("playlist mutex poisoned");
+                // Snapshot before mutation so Cmd+Z removes this clip.
+                if let Ok(mut u) = state.undo.lock() {
+                    u.checkpoint(&pl);
+                }
                 pl.push(clip);
             }
             models::push_clip(window, data);
@@ -64,6 +68,9 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             let data = models::clip_to_data(&clip);
             {
                 let mut pl = state.playlist.lock().expect("playlist mutex poisoned");
+                if let Ok(mut u) = state.undo.lock() {
+                    u.checkpoint(&pl);
+                }
                 pl.push(clip);
             }
             models::push_clip(window, data);
@@ -90,6 +97,7 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             window.set_exporting(false);
             tracing::warn!(%message, "job failed");
             window.set_status_text(format!("Failed: {message}").into());
+            show_toast(window, &message);
         }
         Event::Cancelled { id } => {
             let _ = take_meta(state, id);
@@ -117,18 +125,30 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             }
         }
         Event::FrameReady { clip_id, frame } => {
-            let matches = {
+            let (matches, fps) = {
                 let mut pv = state.preview.lock().expect("preview mutex poisoned");
                 if pv.clip_id != Some(clip_id) {
-                    false
+                    (false, 0.0)
                 } else {
                     pv.playhead_us = frame.pts_us;
-                    true
+                    // Rolling FPS over the last 1 second.
+                    let now = std::time::Instant::now();
+                    pv.frame_history.push_back(now);
+                    let one_sec = std::time::Duration::from_secs(1);
+                    while let Some(t) = pv.frame_history.front() {
+                        if now.duration_since(*t) > one_sec {
+                            pv.frame_history.pop_front();
+                        } else {
+                            break;
+                        }
+                    }
+                    (true, pv.frame_history.len() as f32)
                 }
             };
             if !matches {
                 return;
             }
+            window.set_preview_fps(fps);
             // Timeline-global playhead: (clip_offset + local_pts) / total
             let (global_fraction, global_us) = {
                 let pl = state.playlist.lock().expect("playlist mutex poisoned");
@@ -156,11 +176,13 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
                     false
                 } else {
                     pv.playing = false;
+                    pv.frame_history.clear();
                     true
                 }
             };
             if matches {
                 window.set_playing(false);
+                window.set_preview_fps(0.0);
             }
         }
         Event::ThumbnailsReady { clip_id, paths } => {
@@ -186,6 +208,31 @@ fn frame_to_image(frame: &DecodedFrame) -> Image {
         frame.height,
     );
     Image::from_rgba8(buf)
+}
+
+/// Show a toast for 4 seconds. Timer is intentionally leaked because Slint's
+/// `Timer` must be kept alive for it to fire — it self-disposes after the
+/// single-shot tick when the closure drops it.
+fn show_toast(window: &AppWindow, message: &str) {
+    window.set_toast_message(SharedString::from(message));
+    window.set_toast_visible(true);
+    let weak = window.as_weak();
+    let timer = std::rc::Rc::new(slint::Timer::default());
+    let timer_for_cb = timer.clone();
+    timer.start(
+        slint::TimerMode::SingleShot,
+        std::time::Duration::from_secs(4),
+        move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_toast_visible(false);
+            }
+            // Drop the inner clone now that we've fired so the Timer is collected.
+            let _ = &timer_for_cb;
+        },
+    );
+    // Leak the Rc so the timer outlives this stack frame; the closure clone keeps
+    // it alive while the timer is pending, and dropping it after fire cleans up.
+    Box::leak(Box::new(timer));
 }
 
 fn thumbs_dir(data_dir: &std::path::Path, clip_id: Uuid) -> PathBuf {

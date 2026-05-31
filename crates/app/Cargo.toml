@@ -25,4 +25,5 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 rfd = "0.15"
+opener = { version = "0.7", features = ["reveal"] }
 image.workspace = true

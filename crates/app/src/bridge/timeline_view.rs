@@ -40,7 +40,7 @@ pub fn selected_clip_window(playlist: &Playlist, selected_id: Option<Uuid>) -> O
     let id = selected_id?;
     let mut offset_us: i64 = 0;
     for clip in playlist.clips() {
-        let dur_us = clip.info.duration.as_micros() as i64;
+        let dur_us = clip.effective_duration_us();
         if clip.id == id {
             return Some((offset_us, dur_us));
         }
@@ -53,7 +53,7 @@ pub fn total_duration_us(playlist: &Playlist) -> i64 {
     playlist
         .clips()
         .iter()
-        .map(|c| c.info.duration.as_micros() as i64)
+        .map(|c| c.effective_duration_us())
         .sum()
 }
 
@@ -83,7 +83,7 @@ pub fn gap_positions(playlist: &Playlist, px_per_sec: f32) -> Vec<f32> {
     let mut gaps = Vec::with_capacity(playlist.clips().len() + 1);
     gaps.push(x);
     for clip in playlist.clips() {
-        let w = card_width(clip.info.duration.as_secs_f32(), px_per_sec);
+        let w = card_width(clip.effective_duration().as_secs_f32(), px_per_sec);
         x += w + CARD_SPACING_PX;
         gaps.push(x);
     }
@@ -114,7 +114,7 @@ pub fn drop_target(
     let widths: Vec<f32> = playlist
         .clips()
         .iter()
-        .map(|c| card_width(c.info.duration.as_secs_f32(), px_per_sec))
+        .map(|c| card_width(c.effective_duration().as_secs_f32(), px_per_sec))
         .collect();
 
     let orig_center = gaps[from_idx] + widths[from_idx] / 2.0;
@@ -156,7 +156,7 @@ pub fn fraction_to_clip_local(
     let target_us = (total_us as f64 * f) as i64;
     let mut offset_us: i64 = 0;
     for clip in playlist.clips() {
-        let dur_us = clip.info.duration.as_micros() as i64;
+        let dur_us = clip.effective_duration_us();
         if target_us < offset_us + dur_us {
             return Some((clip.id, (target_us - offset_us).max(0)));
         }
@@ -166,7 +166,7 @@ pub fn fraction_to_clip_local(
     playlist
         .clips()
         .last()
-        .map(|c| (c.id, c.info.duration.as_micros() as i64 - 1))
+        .map(|c| (c.id, c.effective_duration_us() - 1))
 }
 
 #[cfg(test)]

@@ -41,6 +41,8 @@ export component StatusFooter inherits Rectangle {
     in property <float> progress;
     in property <bool> exporting;
     in property <bool> can-export;
+    in property <float> preview-fps;
+    in property <bool> playing;
 
     callback export-clicked();
     callback cancel-clicked();
@@ -86,10 +88,18 @@ export component StatusFooter inherits Rectangle {
                 }
             }
 
-            // Action buttons
+            // Action buttons + optional FPS readout
             HorizontalLayout {
-                spacing: Theme.spacing-sm;
+                spacing: Theme.spacing-md;
                 alignment: end;
+                Text {
+                    visible: root.playing && root.preview-fps > 0;
+                    text: round(root.preview-fps * 10) / 10 + " fps";
+                    color: Palette.text-muted;
+                    font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                    font-weight: 600;
+                }
                 ActionButton {
                     label: "▶  Export";
                     primary: true;
