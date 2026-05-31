@@ -1,0 +1,63 @@
+import { Palette } from "../styles/palette.slint";
+import { Theme } from "../styles/theme.slint";
+
+/// Left-edge label + mute/lock chips for a single timeline track.
+export component TrackHeader inherits Rectangle {
+    in property <string> label;
+    in property <color> badge-color: Palette.accent;
+    in property <bool> muted;
+
+    callback toggle-mute();
+
+    width: 56px;
+    background: Palette.surface-2;
+    border-width: 1px;
+    border-color: Palette.border;
+    border-radius: Theme.radius-sm;
+
+    VerticalLayout {
+        padding: 4px;
+        spacing: 4px;
+        alignment: center;
+
+        // Track badge
+        Rectangle {
+            width: 28px; height: 18px;
+            border-radius: Theme.radius-sm;
+            background: root.badge-color;
+            x: (parent.width - self.width) / 2;
+            Text {
+                text: root.label;
+                color: white;
+                font-size: Theme.font-xs;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        // Mute toggle
+        mute-area := TouchArea {
+            mouse-cursor: pointer;
+            width: 36px; height: 16px;
+            clicked => { root.toggle-mute(); }
+            Rectangle {
+                border-radius: Theme.radius-sm;
+                background: root.muted
+                    ? Palette.danger-soft
+                    : (parent.has-hover ? Palette.surface-3 : transparent);
+                border-width: 1px;
+                border-color: root.muted ? Palette.danger : Palette.border;
+                animate background { duration: 100ms; }
+                Text {
+                    text: root.muted ? "MUTE" : "On";
+                    color: root.muted ? Palette.danger : Palette.text-muted;
+                    font-size: Theme.font-xs;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

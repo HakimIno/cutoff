@@ -52,7 +52,11 @@ impl FfmpegMediaDecoder {
 
         let codec_ctx = ffmpeg_next::codec::context::Context::from_parameters(stream.parameters())?;
         let mut decoder = codec_ctx.decoder().video()?;
-        decoder.set_threading(ffmpeg_next::codec::threading::Config::count(2));
+        // ffmpeg frame-threading scales decode throughput nearly linearly up
+        // to ~8 threads on H.264/H.265; beyond that the marginal gain drops
+        // and latency creeps up (more frames in flight before output).
+        let thread_count = num_cpus::get().clamp(2, 8);
+        decoder.set_threading(ffmpeg_next::codec::threading::Config::count(thread_count));
 
         let width = decoder.width();
         let height = decoder.height();
@@ -103,16 +107,25 @@ impl FfmpegMediaDecoder {
     fn convert(&mut self, decoded: &VideoFrame, pts_us: i64) -> DecoderResult<DecodedFrame> {
         let mut rgba = VideoFrame::empty();
         self.scaler.run(decoded, &mut rgba)?;
-        // RGBA plane stride may exceed width*4; copy row-by-row.
         let stride = rgba.stride(0);
         let row_bytes = (self.width as usize) * 4;
-        let mut buf = vec![0u8; row_bytes * self.height as usize];
+        let h = self.height as usize;
         let src = rgba.data(0);
-        for y in 0..self.height as usize {
-            let s = y * stride;
-            let d = y * row_bytes;
-            buf[d..d + row_bytes].copy_from_slice(&src[s..s + row_bytes]);
-        }
+
+        // Fast path: ffmpeg's RGBA plane is contiguous (stride == row_bytes),
+        // which is the common case → single bulk copy instead of per-row.
+        // At 4K this avoids ~2160 separate `copy_from_slice` calls per frame.
+        let buf: Vec<u8> = if stride == row_bytes {
+            src[..row_bytes * h].to_vec()
+        } else {
+            let mut buf = vec![0u8; row_bytes * h];
+            for y in 0..h {
+                let s = y * stride;
+                let d = y * row_bytes;
+                buf[d..d + row_bytes].copy_from_slice(&src[s..s + row_bytes]);
+            }
+            buf
+        };
         Ok(DecodedFrame {
             width: self.width,
             height: self.height,

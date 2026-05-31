@@ -61,6 +61,7 @@ pub fn clip_to_data(clip: &Clip) -> ClipData {
         thumbnails: ModelRc::from(Rc::new(VecModel::from(thumbs))),
         waveform_peaks: ModelRc::from(Rc::new(VecModel::from(peaks))),
         muted: clip.muted,
+        video_track: clip.video_track as i32,
     }
 }
 
@@ -74,6 +75,15 @@ fn load_image(path: &Path) -> Option<Image> {
 pub fn push_clip(window: &AppWindow, data: ClipData) {
     let model = window.get_clips();
     if let Some(vm) = model.as_any().downcast_ref::<VecModel<ClipData>>() {
+        vm.push(data.clone());
+    }
+    // Mirror into the corresponding per-track lane.
+    let lane = if data.video_track == 1 {
+        window.get_clips_v2()
+    } else {
+        window.get_clips_v1()
+    };
+    if let Some(vm) = lane.as_any().downcast_ref::<VecModel<ClipData>>() {
         vm.push(data);
     }
 }
@@ -91,24 +101,50 @@ pub fn sync_clips(window: &AppWindow, playlist: &Playlist) {
     for clip in playlist.clips() {
         vm.push(clip_to_data(clip));
     }
+    // Mirror into per-track models so the multi-lane Timeline can render
+    // V2 above V1 without duplicating model bookkeeping in Slint.
+    sync_per_track(window, playlist);
+}
+
+fn sync_per_track(window: &AppWindow, playlist: &Playlist) {
+    let push_lane = |lane_track: u8, getter: fn(&AppWindow) -> slint::ModelRc<ClipData>| {
+        let model = getter(window);
+        let Some(vm) = model.as_any().downcast_ref::<VecModel<ClipData>>() else {
+            return;
+        };
+        while vm.row_count() > 0 {
+            vm.remove(0);
+        }
+        for clip in playlist.clips() {
+            if clip.video_track == lane_track {
+                vm.push(clip_to_data(clip));
+            }
+        }
+    };
+    push_lane(0, AppWindow::get_clips_v1);
+    push_lane(1, AppWindow::get_clips_v2);
 }
 
 /// Replace one row's thumbnails by clip id (no full sync).
 pub fn refresh_clip_thumbnails(window: &AppWindow, playlist: &Playlist, clip_id: uuid::Uuid) {
-    let model = window.get_clips();
-    let Some(vm) = model.as_any().downcast_ref::<VecModel<ClipData>>() else {
-        return;
-    };
     let Some(clip) = playlist.clips().iter().find(|c| c.id == clip_id) else {
         return;
     };
     let id_str = clip.id.to_string();
-    for i in 0..vm.row_count() {
-        if let Some(row) = vm.row_data(i) {
-            if row.id.as_str() == id_str {
-                vm.set_row_data(i, clip_to_data(clip));
-                break;
+    let new_data = clip_to_data(clip);
+    let update = |model: slint::ModelRc<ClipData>| {
+        if let Some(vm) = model.as_any().downcast_ref::<VecModel<ClipData>>() {
+            for i in 0..vm.row_count() {
+                if let Some(row) = vm.row_data(i) {
+                    if row.id.as_str() == id_str {
+                        vm.set_row_data(i, new_data.clone());
+                        break;
+                    }
+                }
             }
         }
-    }
+    };
+    update(window.get_clips());
+    update(window.get_clips_v1());
+    update(window.get_clips_v2());
 }

@@ -49,6 +49,9 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 cpal = "0.15"
 ringbuf = "0.4"
 
+# Performance
+num_cpus = "1.16"
+
 # UI
 slint = { version = "1.8", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "compat-1-2"] }
 slint-build = "1.8"

@@ -16,11 +16,16 @@ use super::{CHANNELS, SAMPLE_RATE};
 /// Capacity of the audio ring buffer in samples (≈ 250 ms of stereo @ 48k).
 const RING_CAPACITY_SAMPLES: usize = 24_000;
 
+#[allow(dead_code)]
+struct SendStream(Stream);
+unsafe impl Send for SendStream {}
+unsafe impl Sync for SendStream {}
+
 /// Live audio output. Holds the cpal stream so it stays alive; dropping
 /// stops playback. The `producer` is moved into the preview thread that
 /// decodes audio.
 pub struct AudioOutput {
-    _stream: Stream,
+    _stream: SendStream,
     pub producer: Producer<f32>,
     /// Set by the cpal callback every time it consumes samples — gives the
     /// preview thread an approximate audio clock for A/V sync. Unit: frames
@@ -115,7 +120,7 @@ impl AudioOutput {
             .map_err(|e| AudioOutputError::Stream(e.to_string()))?;
 
         Ok(Self {
-            _stream: stream,
+            _stream: SendStream(stream),
             producer,
             frames_played,
             muted,
@@ -137,6 +142,12 @@ impl AudioOutput {
     /// created. Wraps at u32::MAX after ~25 hours @ 48k — acceptable.
     pub fn frames_played(&self) -> u32 {
         self.frames_played.load(Ordering::Relaxed)
+    }
+
+    /// Clone the shared frames-played counter so another thread can read the
+    /// audio clock without holding a reference to the `!Send` stream.
+    pub fn frames_played_handle(&self) -> Arc<AtomicU32> {
+        self.frames_played.clone()
     }
 }
 

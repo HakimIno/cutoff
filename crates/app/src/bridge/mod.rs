@@ -12,11 +12,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use uuid::Uuid;
-use video_merger_core::domain::Playlist;
+use video_merger_core::domain::{Playlist, Project};
 use video_merger_persistence::{AppConfig, History, Storage};
 use video_merger_ui::AppWindow;
 use video_merger_worker::{JobId, WorkerHandle};
 
+/// Shared project: the new multi-track project model.
+/// Replaces the old `SharedPlaylist` as the source of truth.
+pub type SharedProject = Arc<Mutex<Project>>;
+/// Legacy alias — wraps a Playlist for backward-compat callers.
+/// DEPRECATED: use SharedProject.
 pub type SharedPlaylist = Arc<Mutex<Playlist>>;
 pub type ActiveJob = Arc<Mutex<Option<JobId>>>;
 pub type JobMetaMap = Arc<Mutex<HashMap<JobId, JobMeta>>>;
@@ -34,6 +39,14 @@ pub struct AudioState {
     #[allow(dead_code)]
     pub master_volume: f32, // 1.0 = unity
 }
+
+/// Per-track UI/playback flags. Index 0 = V1, 1 = V2.
+#[derive(Debug, Default, Clone)]
+pub struct TracksState {
+    pub video_muted: [bool; 2],
+}
+
+pub type SharedTracks = Arc<Mutex<TracksState>>;
 
 /// Metadata captured at export-submission time, looked up when the
 /// terminal event for that job arrives.
@@ -61,7 +74,11 @@ pub struct PreviewState {
 
 #[derive(Clone)]
 pub struct BridgeState {
+    /// Legacy playlist — kept in sync with `project.tracks[v1].clips` for
+    /// backward compat with existing callbacks that haven't been migrated yet.
     pub playlist: SharedPlaylist,
+    /// Multi-track project model (source of truth for Phase 8+).
+    pub project: SharedProject,
     pub active_job: ActiveJob,
     pub job_meta: JobMetaMap,
     pub config: SharedConfig,
@@ -71,6 +88,7 @@ pub struct BridgeState {
     pub zoom: SharedZoom,
     pub undo: SharedUndo,
     pub audio: SharedAudio,
+    pub tracks: SharedTracks,
 }
 
 pub const ZOOM_MIN: f32 = 1.0;
@@ -83,4 +101,15 @@ pub fn install(window: &AppWindow, worker: WorkerHandle, state: BridgeState) {
     } = worker;
     callbacks::install(window, cmd_tx.clone(), state.clone());
     events::install(window, event_rx, cmd_tx, state);
+}
+
+/// Synchronize the legacy Playlist from the Project's V1 track.
+/// Call this after mutating the Project to keep backward-compat callers happy.
+pub fn sync_playlist_from_project(state: &BridgeState) {
+    let playlist = {
+        let proj = state.project.lock().expect("project mutex poisoned");
+        proj.to_playlist()
+    };
+    let mut pl = state.playlist.lock().expect("playlist mutex poisoned");
+    *pl = playlist;
 }

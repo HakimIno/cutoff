@@ -11,6 +11,7 @@ export struct ClipData {
     thumbnails: [image],
     waveform-peaks: [float],
     muted: bool,
+    video-track: int,
 }
 
 component IconAction inherits Rectangle {
@@ -51,6 +52,7 @@ export component ClipBlock inherits Rectangle {
     callback trim-released(string, bool, length);  // (id, is_right_handle, delta_px)
     callback request-split(string);
     callback reveal-in-finder(string);
+    callback move-to-track(string, int);
 
     width: max(min(self.px-per-sec * root.data.duration-secs, 800px), 120px);
     height: 104px;
@@ -209,12 +211,18 @@ export component ClipBlock inherits Rectangle {
         background: white;
     }
 
-    // Right-click context menu (Split / Delete / Reveal in Finder).
+    // Right-click context menu (Split / Move track / Delete / Reveal in Finder).
     ContextMenuArea {
         Menu {
             MenuItem {
                 title: "Split at playhead";
                 activated => { root.request-split(root.data.id); }
+            }
+            MenuItem {
+                title: root.data.video-track == 0 ? "Move to V2" : "Move to V1";
+                activated => {
+                    root.move-to-track(root.data.id, root.data.video-track == 0 ? 1 : 0);
+                }
             }
             MenuItem {
                 title: "Delete clip";

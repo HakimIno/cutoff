@@ -32,6 +32,11 @@ pub struct Clip {
     /// Cached waveform peaks path (runtime-only).
     #[serde(default, skip)]
     pub waveform_path: Option<PathBuf>,
+    /// Which video track the clip lives on. 0 = V1 (base), 1 = V2 (overlay).
+    /// Audio waveform follows the same lane. Defaults to V1 so v1 projects
+    /// load cleanly without migration logic.
+    #[serde(default)]
+    pub video_track: u8,
 }
 
 fn default_volume() -> f32 {
@@ -51,6 +56,7 @@ impl Clip {
             volume: 1.0,
             muted: false,
             waveform_path: None,
+            video_track: 0,
         }
     }
 

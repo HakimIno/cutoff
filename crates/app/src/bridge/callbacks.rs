@@ -214,8 +214,9 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
     {
         let weak = window.as_weak();
         let pl = state.playlist.clone();
+        let proj = state.project.clone();
         let zoom = state.zoom.clone();
-        window.on_save_project(move || on_save_project(weak.clone(), pl.clone(), zoom.clone()));
+        window.on_save_project(move || on_save_project(weak.clone(), pl.clone(), proj.clone(), zoom.clone()));
     }
     {
         let weak = window.as_weak();
@@ -250,6 +251,20 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let weak = window.as_weak();
         let audio = state.audio.clone();
         window.on_toggle_master_mute(move || on_toggle_master_mute(weak.clone(), tx.clone(), audio.clone()));
+    }
+    {
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let zoom = state.zoom.clone();
+        let undo = state.undo.clone();
+        window.on_move_to_track(move |id, t| {
+            on_move_to_track(weak.clone(), pl.clone(), zoom.clone(), undo.clone(), id, t as u8)
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let tracks = state.tracks.clone();
+        window.on_toggle_track_mute(move |idx| on_toggle_track_mute(weak.clone(), tracks.clone(), idx));
     }
     {
         let tx = cmd_tx.clone();
@@ -826,7 +841,12 @@ fn on_redo(
     restore_playlist(weak, playlist, preview, zoom, next);
 }
 
-fn on_save_project(weak: Weak<AppWindow>, playlist: SharedPlaylist, zoom: SharedZoom) {
+fn on_save_project(
+    weak: Weak<AppWindow>,
+    _playlist: SharedPlaylist,
+    project_state: super::SharedProject,
+    zoom: SharedZoom,
+) {
     let path = rfd::FileDialog::new()
         .add_filter("Cutoff project", &["json"])
         .set_title("Save project")
@@ -835,9 +855,9 @@ fn on_save_project(weak: Weak<AppWindow>, playlist: SharedPlaylist, zoom: Shared
     let Some(path) = path else { return };
 
     let project = {
-        let pl = playlist.lock().expect("playlist mutex poisoned");
+        let core_proj = project_state.lock().expect("project mutex poisoned").clone();
         let z = *zoom.lock().expect("zoom mutex poisoned");
-        Project::new(pl.clone(), z)
+        Project::new(core_proj, z)
     };
     if let Err(err) = project.save_to(&path) {
         tracing::warn!(error = %err, ?path, "save project failed");
@@ -893,7 +913,8 @@ fn on_load_project(
             ZOOM_DEFAULT
         };
     }
-    restore_playlist(weak.clone(), playlist, preview, zoom, project.playlist);
+    let loaded_playlist = project.playlist_compat();
+    restore_playlist(weak.clone(), playlist, preview, zoom, loaded_playlist);
     if let Some(window) = weak.upgrade() {
         window.set_status_text(SharedString::from(format!(
             "Loaded: {}",
@@ -919,6 +940,61 @@ fn on_toggle_master_mute(
     }
     if let Some(window) = weak.upgrade() {
         window.set_master_muted(now_muted);
+    }
+}
+
+fn on_move_to_track(
+    weak: Weak<AppWindow>,
+    playlist: SharedPlaylist,
+    zoom: SharedZoom,
+    undo: SharedUndo,
+    id: SharedString,
+    target_track: u8,
+) {
+    let Ok(uuid) = Uuid::parse_str(id.as_str()) else { return };
+    if target_track > 1 {
+        return;
+    }
+    {
+        let mut pl = playlist.lock().expect("playlist mutex poisoned");
+        if let Ok(mut u) = undo.lock() {
+            u.checkpoint(&pl);
+        }
+        for c in pl.clips_mut() {
+            if c.id == uuid {
+                c.video_track = target_track;
+                break;
+            }
+        }
+    }
+    if let Some(window) = weak.upgrade() {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        let z = *zoom.lock().expect("zoom mutex poisoned");
+        models::sync_clips(&window, &pl);
+        timeline_view::refresh_ruler(&window, &pl, z);
+    }
+}
+
+fn on_toggle_track_mute(
+    weak: Weak<AppWindow>,
+    tracks: super::SharedTracks,
+    idx: i32,
+) {
+    if idx < 0 || idx > 1 {
+        return;
+    }
+    let i = idx as usize;
+    let now_muted = {
+        let mut t = tracks.lock().expect("tracks mutex poisoned");
+        t.video_muted[i] = !t.video_muted[i];
+        t.video_muted[i]
+    };
+    if let Some(window) = weak.upgrade() {
+        if i == 0 {
+            window.set_v1_muted(now_muted);
+        } else {
+            window.set_v2_muted(now_muted);
+        }
     }
 }
 

@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{anyhow, Result};
 use slint::{ComponentHandle, ModelRc, VecModel};
 use tracing_subscriber::EnvFilter;
-use video_merger_core::domain::Playlist;
+use video_merger_core::domain::Project;
 use video_merger_engine::ffmpeg::FfmpegEngine;
 use video_merger_persistence::{AppConfig, History, Storage};
 use video_merger_ui::{AppWindow, ClipData};
@@ -65,14 +65,22 @@ fn main() -> Result<()> {
     let window = AppWindow::new()?;
 
     let clips_model: Rc<VecModel<ClipData>> = Rc::new(VecModel::default());
+    let clips_v1_model: Rc<VecModel<ClipData>> = Rc::new(VecModel::default());
+    let clips_v2_model: Rc<VecModel<ClipData>> = Rc::new(VecModel::default());
     window.set_clips(ModelRc::from(clips_model));
+    window.set_clips_v1(ModelRc::from(clips_v1_model));
+    window.set_clips_v2(ModelRc::from(clips_v2_model));
     window.set_status_text("Ready".into());
     window.set_exporting(false);
 
     // Shared state. Arc<Mutex<>> because the event-bridge thread marshals
     // mutations into the UI thread via Send-bounded closures.
+    let project = Project::with_default_tracks();
+    let playlist = project.to_playlist();
+
     let state = BridgeState {
-        playlist: Arc::new(Mutex::new(Playlist::new())),
+        playlist: Arc::new(Mutex::new(playlist)),
+        project: Arc::new(Mutex::new(project)),
         active_job: Arc::new(Mutex::new(None)),
         job_meta: Arc::new(Mutex::new(HashMap::new())),
         config: Arc::new(Mutex::new(config)),
@@ -85,6 +93,7 @@ fn main() -> Result<()> {
             master_muted: false,
             master_volume: 1.0,
         })),
+        tracks: Arc::new(Mutex::new(bridge::TracksState::default())),
     };
 
     window.set_px_per_sec(bridge::ZOOM_DEFAULT);

@@ -5417,6 +5417,7 @@ dependencies = [
  "cpal",
  "ffmpeg-next",
  "image",
+ "num_cpus",
  "ringbuf",
  "serde",
  "serde_json",

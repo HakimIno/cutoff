@@ -2,6 +2,7 @@ import { Palette } from "../styles/palette.slint";
 import { Theme } from "../styles/theme.slint";
 import { ClipBlock, ClipData } from "clip-card.slint";
 import { DropIndicator } from "drop-indicator.slint";
+import { TrackHeader } from "track-header.slint";
 import { ScrollView } from "std-widgets.slint";
 
 export struct RulerTick {
@@ -10,19 +11,64 @@ export struct RulerTick {
     major: bool,
 }
 
-export component Timeline inherits Rectangle {
+/// Single lane that renders clips belonging to one video track.
+component TrackLane inherits Rectangle {
     in property <[ClipData]> clips;
+    in property <string> selected-id;
+    in property <length> px-per-sec: 6px;
+    in property <int> drag-from-index: -1;
+
+    callback clip-clicked(string);
+    callback remove-clicked(string);
+    callback drag-started(int);
+    callback drag-moved(int, length);
+    callback drag-released(int, length);
+    callback trim-released(string, bool, length);
+    callback request-split(string);
+    callback reveal-in-finder(string);
+    callback move-to-track(string, int);
+
+    HorizontalLayout {
+        padding-left: Theme.spacing-xs;
+        padding-right: Theme.spacing-xs;
+        padding-top: 2px;
+        padding-bottom: 2px;
+        spacing: 1px;
+        alignment: start;
+        for clip[idx] in root.clips: ClipBlock {
+            data: clip;
+            index: idx;
+            px-per-sec: root.px-per-sec;
+            selected: clip.id == root.selected-id;
+            drag-ghost: root.drag-from-index == idx;
+            clip-clicked(id)      => { root.clip-clicked(id); }
+            remove-clicked(id)    => { root.remove-clicked(id); }
+            drag-started(i)       => { root.drag-started(i); }
+            drag-moved(i, dx)     => { root.drag-moved(i, dx); }
+            drag-released(i, dx)  => { root.drag-released(i, dx); }
+            trim-released(id, right, dx) => { root.trim-released(id, right, dx); }
+            request-split(id)     => { root.request-split(id); }
+            reveal-in-finder(id)  => { root.reveal-in-finder(id); }
+            move-to-track(id, t)  => { root.move-to-track(id, t); }
+        }
+    }
+}
+
+export component Timeline inherits Rectangle {
+    in property <[ClipData]> clips-v1;
+    in property <[ClipData]> clips-v2;
     in property <[RulerTick]> ruler-ticks;
     in property <string> selected-id;
     in property <length> px-per-sec: 6px;
     in property <length> total-width: 0px;
     in property <float> playhead-fraction: 0.0;
 
-    // Drag state (driven by bridge / app-window).
     in property <int> drag-from-index: -1;
     in property <int> drop-target-index: -1;
-    // x-position of the drop indicator within the lane, in px from lane left.
     in property <length> drop-indicator-x: 0px;
+
+    in property <bool> v1-muted;
+    in property <bool> v2-muted;
 
     callback clip-clicked(string);
     callback remove-clicked(string);
@@ -33,6 +79,9 @@ export component Timeline inherits Rectangle {
     callback trim-released(string, bool, length);
     callback request-split(string);
     callback reveal-in-finder(string);
+    callback move-to-track(string, int);
+    callback toggle-v1-mute();
+    callback toggle-v2-mute();
 
     background: Palette.background;
 
@@ -53,150 +102,202 @@ export component Timeline inherits Rectangle {
                 vertical-alignment: center;
             }
             Text {
-                text: root.clips.length == 0
-                    ? "Empty · drop video files here"
-                    : root.clips.length + " clips · drag to reorder · Space play";
+                text: (root.clips-v1.length + root.clips-v2.length) == 0
+                    ? "Empty"
+                    : (root.clips-v1.length + root.clips-v2.length) + " clips · 2 tracks · drag-drop video files · right-click to switch tracks";
                 color: Palette.text-dim;
                 font-size: Theme.font-xs;
                 vertical-alignment: center;
             }
         }
 
-        // Lane container (ruler + lane scroll together)
+        // Lane container — fixed-width left rail with TrackHeaders, scrollable right region for ruler + lanes.
         Rectangle {
-            height: 152px;
+            height: 218px;
             border-radius: Theme.radius;
             background: Palette.surface;
             border-width: 1px;
             border-color: Palette.border;
             clip: true;
 
-            if root.clips.length == 0 : VerticalLayout {
-                alignment: center;
-                spacing: Theme.spacing-xs;
-                Text {
-                    text: "No clips yet";
-                    color: Palette.text-muted;
-                    font-size: Theme.font-md;
-                    font-weight: 600;
-                    horizontal-alignment: center;
-                }
-                Text {
-                    text: "Click  +  Add Clips  or drop a video onto the window";
-                    color: Palette.text-dim;
-                    font-size: Theme.font-xs;
-                    horizontal-alignment: center;
-                }
-            }
+            HorizontalLayout {
+                spacing: 0px;
 
-            if root.clips.length > 0 : ScrollView {
-                viewport-height: self.visible-height;
-                viewport-width: max(root.total-width + 12px, self.visible-width);
-
+                // Left rail: track headers
                 Rectangle {
-                    width: max(root.total-width + 12px, parent.width);
-                    height: 150px;
+                    width: 60px;
+                    background: Palette.surface;
+                    VerticalLayout {
+                        padding-top: 24px; // align with ruler height
+                        padding-left: 2px;
+                        padding-right: 2px;
+                        spacing: 2px;
+                        Rectangle { height: 2px; background: transparent; }
+                        TrackHeader {
+                            label: "V2";
+                            badge-color: Palette.accent-2;
+                            muted: root.v2-muted;
+                            height: 86px;
+                            toggle-mute => { root.toggle-v2-mute(); }
+                        }
+                        TrackHeader {
+                            label: "V1";
+                            badge-color: Palette.accent;
+                            muted: root.v1-muted;
+                            height: 86px;
+                            toggle-mute => { root.toggle-v1-mute(); }
+                        }
+                    }
+                }
 
-                    // Ruler strip (24px tall, top of lane) — click to seek.
-                    Rectangle {
-                        x: 0;
-                        y: 0;
-                        width: parent.width;
-                        height: 24px;
-                        background: Palette.surface-2;
+                // Right side: ruler + lanes
+                Rectangle {
+                    horizontal-stretch: 1;
+
+                    if (root.clips-v1.length + root.clips-v2.length) == 0 : VerticalLayout {
+                        alignment: center;
+                        spacing: Theme.spacing-xs;
+                        Text {
+                            text: "No clips yet";
+                            color: Palette.text-muted;
+                            font-size: Theme.font-md;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Click  +  Add Clips  or drop a video onto the window";
+                            color: Palette.text-dim;
+                            font-size: Theme.font-xs;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    if (root.clips-v1.length + root.clips-v2.length) > 0 : ScrollView {
+                        viewport-height: self.visible-height;
+                        viewport-width: max(root.total-width + 12px, self.visible-width);
 
                         Rectangle {
-                            x: 0;
-                            y: parent.height - 1px;
-                            width: parent.width;
-                            height: 1px;
-                            background: Palette.border;
-                        }
+                            width: max(root.total-width + 12px, parent.width);
+                            height: 216px;
 
-                        for tick in root.ruler-ticks: Rectangle {
-                            x: tick.x;
-                            y: tick.major ? 12px : 17px;
-                            width: 1px;
-                            height: tick.major ? 12px : 7px;
-                            background: tick.major ? Palette.text-muted : Palette.text-dim;
-                        }
+                            // Ruler strip
+                            Rectangle {
+                                x: 0;
+                                y: 0;
+                                width: parent.width;
+                                height: 24px;
+                                background: Palette.surface-2;
 
-                        for tick in root.ruler-ticks: Text {
-                            visible: tick.major;
-                            x: tick.x + 3px;
-                            y: 2px;
-                            text: tick.label;
-                            color: Palette.text-muted;
-                            font-size: Theme.font-xs;
-                            font-weight: 500;
-                        }
+                                Rectangle {
+                                    x: 0;
+                                    y: parent.height - 1px;
+                                    width: parent.width;
+                                    height: 1px;
+                                    background: Palette.border;
+                                }
 
-                        ruler-scrub := TouchArea {
-                            mouse-cursor: pointer;
-                            clicked => {
-                                if (self.width > 0px) {
-                                    root.seek-fraction(self.pressed-x / self.width);
+                                for tick in root.ruler-ticks: Rectangle {
+                                    x: tick.x;
+                                    y: tick.major ? 12px : 17px;
+                                    width: 1px;
+                                    height: tick.major ? 12px : 7px;
+                                    background: tick.major ? Palette.text-muted : Palette.text-dim;
+                                }
+
+                                for tick in root.ruler-ticks: Text {
+                                    visible: tick.major;
+                                    x: tick.x + 3px;
+                                    y: 2px;
+                                    text: tick.label;
+                                    color: Palette.text-muted;
+                                    font-size: Theme.font-xs;
+                                    font-weight: 500;
+                                }
+
+                                ruler-scrub := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        if (self.width > 0px) {
+                                            root.seek-fraction(self.pressed-x / self.width);
+                                        }
+                                    }
                                 }
                             }
-                        }
-                    }
 
-                    // Lane body — cards arranged horizontally
-                    Rectangle {
-                        x: 0;
-                        y: 24px;
-                        width: parent.width;
-                        height: parent.height - 24px;
-
-                        HorizontalLayout {
-                            padding-left: Theme.spacing-xs;
-                            padding-right: Theme.spacing-xs;
-                            padding-top: Theme.spacing-xs;
-                            padding-bottom: Theme.spacing-xs;
-                            spacing: 1px;
-                            alignment: start;
-                            for clip[idx] in root.clips: ClipBlock {
-                                data: clip;
-                                index: idx;
+                            // V2 lane (top, 86px)
+                            v2-lane := TrackLane {
+                                x: 0;
+                                y: 26px;
+                                width: parent.width;
+                                height: 86px;
+                                background: root.v2-muted
+                                    ? Palette.danger-soft
+                                    : (root.clips-v2.length == 0 ? Palette.background : transparent);
+                                clips: root.clips-v2;
+                                selected-id: root.selected-id;
                                 px-per-sec: root.px-per-sec;
-                                selected: clip.id == root.selected-id;
-                                drag-ghost: root.drag-from-index == idx;
-                                clip-clicked(id) => { root.clip-clicked(id); }
-                                remove-clicked(id) => { root.remove-clicked(id); }
-                                drag-started(i) => { root.drag-started(i); }
-                                drag-moved(i, dx) => { root.drag-moved(i, dx); }
-                                drag-released(i, dx) => { root.drag-released(i, dx); }
-                                trim-released(id, right, dx) => { root.trim-released(id, right, dx); }
-                                request-split(id) => { root.request-split(id); }
-                                reveal-in-finder(id) => { root.reveal-in-finder(id); }
+                                drag-from-index: root.drag-from-index;
+                                clip-clicked(id)      => { root.clip-clicked(id); }
+                                remove-clicked(id)    => { root.remove-clicked(id); }
+                                drag-started(i)       => { root.drag-started(i); }
+                                drag-moved(i, dx)     => { root.drag-moved(i, dx); }
+                                drag-released(i, dx)  => { root.drag-released(i, dx); }
+                                trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
+                                request-split(id)     => { root.request-split(id); }
+                                reveal-in-finder(id)  => { root.reveal-in-finder(id); }
+                                move-to-track(id, t)  => { root.move-to-track(id, t); }
+                            }
+
+                            // V1 lane (bottom, 86px)
+                            v1-lane := TrackLane {
+                                x: 0;
+                                y: 116px;
+                                width: parent.width;
+                                height: 86px;
+                                background: root.v1-muted
+                                    ? Palette.danger-soft
+                                    : (root.clips-v1.length == 0 ? Palette.background : transparent);
+                                clips: root.clips-v1;
+                                selected-id: root.selected-id;
+                                px-per-sec: root.px-per-sec;
+                                drag-from-index: root.drag-from-index;
+                                clip-clicked(id)      => { root.clip-clicked(id); }
+                                remove-clicked(id)    => { root.remove-clicked(id); }
+                                drag-started(i)       => { root.drag-started(i); }
+                                drag-moved(i, dx)     => { root.drag-moved(i, dx); }
+                                drag-released(i, dx)  => { root.drag-released(i, dx); }
+                                trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
+                                request-split(id)     => { root.request-split(id); }
+                                reveal-in-finder(id)  => { root.reveal-in-finder(id); }
+                                move-to-track(id, t)  => { root.move-to-track(id, t); }
+                            }
+
+                            // Drop indicator (drawn over active lane — Phase 8 keeps it on V1).
+                            if root.drop-target-index >= 0 : DropIndicator {
+                                x: root.drop-indicator-x;
+                                y: 26px;
+                                height: 178px;
+                            }
+
+                            // Playhead spans both lanes
+                            Rectangle {
+                                visible: root.selected-id != "" && root.total-width > 0px;
+                                x: root.playhead-fraction * parent.width;
+                                y: 0;
+                                width: 1px;
+                                height: parent.height;
+                                background: Palette.accent-2;
+                            }
+                            Rectangle {
+                                visible: root.selected-id != "" && root.total-width > 0px;
+                                x: root.playhead-fraction * parent.width - 3px;
+                                y: 0;
+                                width: 7px;
+                                height: 5px;
+                                background: Palette.accent-2;
+                                border-radius: 1px;
                             }
                         }
-
-                        // Drop indicator
-                        if root.drop-target-index >= 0 : DropIndicator {
-                            x: root.drop-indicator-x;
-                            y: 2px;
-                            height: parent.height - 4px;
-                        }
-                    }
-
-                    // Playhead spans ruler+lane height
-                    Rectangle {
-                        visible: root.selected-id != "" && root.total-width > 0px;
-                        x: root.playhead-fraction * parent.width;
-                        y: 0;
-                        width: 1px;
-                        height: parent.height;
-                        background: Palette.accent-2;
-                    }
-                    Rectangle {
-                        visible: root.selected-id != "" && root.total-width > 0px;
-                        x: root.playhead-fraction * parent.width - 3px;
-                        y: 0;
-                        width: 7px;
-                        height: 5px;
-                        background: Palette.accent-2;
-                        border-radius: 1px;
                     }
                 }
             }

@@ -18,8 +18,12 @@ export component AppWindow inherits Window {
     min-height: 640px;
     background: Palette.background;
 
-    // Timeline state
-    in property <[ClipData]> clips;
+    // Timeline state (split by track — V2 overlay above V1 base)
+    in property <[ClipData]> clips;          // all clips, used by sidebar count/preview lookup
+    in property <[ClipData]> clips-v1;
+    in property <[ClipData]> clips-v2;
+    in property <bool> v1-muted;
+    in property <bool> v2-muted;
     in property <string> selected-id;
     in property <bool> has-selection;
 
@@ -91,6 +95,8 @@ export component AppWindow inherits Window {
     callback dismiss-toast();
     callback reveal-in-finder(string);
     callback toggle-master-mute();
+    callback move-to-track(string, int);
+    callback toggle-track-mute(int);
 
     in property <bool> master-muted;
 
@@ -223,7 +229,10 @@ export component AppWindow inherits Window {
                             background: Palette.border;
                         }
                         Timeline {
-                            clips: root.clips;
+                            clips-v1: root.clips-v1;
+                            clips-v2: root.clips-v2;
+                            v1-muted: root.v1-muted;
+                            v2-muted: root.v2-muted;
                             ruler-ticks: root.ruler-ticks;
                             selected-id: root.selected-id;
                             px-per-sec: root.px-per-sec;
@@ -240,11 +249,13 @@ export component AppWindow inherits Window {
                             drag-released(i, dx) => { root.drag-released(i, dx); }
                             trim-released(id, right, dx) => { root.trim-released(id, right, dx); }
                             request-split(id) => {
-                                // Context-menu Split selects the clip first then splits at playhead.
                                 root.clip-selected(id);
                                 root.split();
                             }
                             reveal-in-finder(id) => { root.reveal-in-finder(id); }
+                            move-to-track(id, t) => { root.move-to-track(id, t); }
+                            toggle-v1-mute => { root.toggle-track-mute(0); }
+                            toggle-v2-mute => { root.toggle-track-mute(1); }
                         }
                     }
                 }
