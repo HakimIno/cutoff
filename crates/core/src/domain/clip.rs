@@ -23,6 +23,19 @@ pub struct Clip {
     /// Skipped from serde because they're regenerated on import.
     #[serde(default, skip)]
     pub thumbnails: Vec<PathBuf>,
+    /// Per-clip linear volume multiplier. 1.0 = unity, 2.0 = +6dB, 0.0 = silent.
+    #[serde(default = "default_volume")]
+    pub volume: f32,
+    /// Per-clip mute toggle.
+    #[serde(default)]
+    pub muted: bool,
+    /// Cached waveform peaks path (runtime-only).
+    #[serde(default, skip)]
+    pub waveform_path: Option<PathBuf>,
+}
+
+fn default_volume() -> f32 {
+    1.0
 }
 
 impl Clip {
@@ -35,6 +48,9 @@ impl Clip {
             trim_in: Duration::ZERO,
             trim_out,
             thumbnails: Vec::new(),
+            volume: 1.0,
+            muted: false,
+            waveform_path: None,
         }
     }
 

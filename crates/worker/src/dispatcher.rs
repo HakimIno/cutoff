@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
+use video_merger_engine::audio::waveform as wf;
 use video_merger_engine::{decoder, EngineError, MergeEngine, ProgressEvent};
 
 use crate::job::{Command, Event, JobId};
@@ -126,6 +127,46 @@ impl Dispatcher {
                             }
                         }
                     });
+                }
+                Command::GenerateWaveform {
+                    clip_id,
+                    path,
+                    out_path,
+                } => {
+                    let event_tx = self.event_tx.clone();
+                    tokio::task::spawn_blocking(move || {
+                        if let Some(parent) = out_path.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        match wf::extract_waveform(&path) {
+                            Ok(Some(peaks)) => {
+                                if let Err(e) = peaks.save_to(&out_path) {
+                                    tracing::warn!(error = %e, "save waveform failed");
+                                    return;
+                                }
+                                let _ = event_tx.send(Event::WaveformReady {
+                                    clip_id,
+                                    path: out_path,
+                                });
+                            }
+                            Ok(None) => {
+                                tracing::debug!(?path, "no audio stream — skip waveform");
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, ?path, "waveform extraction failed");
+                            }
+                        }
+                    });
+                }
+                Command::SetMasterMuted(m) => {
+                    if let Some(h) = &self.preview {
+                        h.send(PreviewCtrl::SetMuted(m));
+                    }
+                }
+                Command::SetMasterVolume(v) => {
+                    if let Some(h) = &self.preview {
+                        h.send(PreviewCtrl::SetVolume(v));
+                    }
                 }
                 Command::Shutdown => break,
             }

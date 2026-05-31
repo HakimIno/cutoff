@@ -5,9 +5,39 @@ use std::rc::Rc;
 
 use slint::{Image, Model, ModelRc, SharedString, VecModel};
 use video_merger_core::domain::{Clip, Playlist};
+use video_merger_engine::audio::waveform as wf;
 use video_merger_ui::{AppWindow, ClipData};
 
 use crate::view_model::timeline_vm::ClipRow;
+
+/// Down-sample waveform peaks (one bucket per ~10ms) into the ~200 bars
+/// the UI strip can render without overdraw. Returns abs peak per output
+/// bucket as a value in 0..1.
+fn waveform_to_bars(path: &Path, bars: usize) -> Vec<f32> {
+    let Ok(peaks) = wf::load_waveform(path) else {
+        return Vec::new();
+    };
+    if peaks.peaks.is_empty() {
+        return Vec::new();
+    }
+    let n_in = peaks.peaks.len();
+    let bars = bars.min(n_in).max(1);
+    let mut out = Vec::with_capacity(bars);
+    for i in 0..bars {
+        let start = i * n_in / bars;
+        let end = ((i + 1) * n_in / bars).max(start + 1);
+        let mut peak = 0.0f32;
+        for j in start..end {
+            let (mn, mx) = peaks.peaks[j];
+            let a = mn.abs().max(mx.abs());
+            if a > peak {
+                peak = a;
+            }
+        }
+        out.push(peak.clamp(0.0, 1.0));
+    }
+    out
+}
 
 /// Convert a domain `Clip` into the Slint-side `ClipData` struct.
 pub fn clip_to_data(clip: &Clip) -> ClipData {
@@ -17,6 +47,11 @@ pub fn clip_to_data(clip: &Clip) -> ClipData {
         .iter()
         .filter_map(|p| load_image(p))
         .collect();
+    let peaks: Vec<f32> = clip
+        .waveform_path
+        .as_deref()
+        .map(|p| waveform_to_bars(p, 200))
+        .unwrap_or_default();
     ClipData {
         id: SharedString::from(row.id),
         name: SharedString::from(row.name),
@@ -24,6 +59,8 @@ pub fn clip_to_data(clip: &Clip) -> ClipData {
         resolution: SharedString::from(row.resolution),
         duration_secs: row.duration_secs,
         thumbnails: ModelRc::from(Rc::new(VecModel::from(thumbs))),
+        waveform_peaks: ModelRc::from(Rc::new(VecModel::from(peaks))),
+        muted: clip.muted,
     }
 }
 

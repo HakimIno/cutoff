@@ -43,6 +43,7 @@ export component StatusFooter inherits Rectangle {
     in property <bool> can-export;
     in property <float> preview-fps;
     in property <bool> playing;
+    in property <bool> master-muted;
 
     callback export-clicked();
     callback cancel-clicked();
@@ -92,6 +93,14 @@ export component StatusFooter inherits Rectangle {
             HorizontalLayout {
                 spacing: Theme.spacing-md;
                 alignment: end;
+                Text {
+                    visible: root.master-muted;
+                    text: "🔇 muted";
+                    color: Palette.warning;
+                    font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                    font-weight: 600;
+                }
                 Text {
                     visible: root.playing && root.preview-fps > 0;
                     text: round(root.preview-fps * 10) / 10 + " fps";

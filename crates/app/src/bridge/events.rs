@@ -58,9 +58,11 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             window.set_status_text(format!("Added: {name}").into());
             refresh_ruler_from_state(window, state);
 
-            // Kick off thumbnail extraction so the filmstrip fills in.
+            // Kick off thumbnail + waveform extraction so the card fills in.
             let out_dir = thumbs_dir(&state.storage.data_dir, clip_id);
-            enqueue_thumbnails(cmd_tx, clip_id, path, out_dir);
+            enqueue_thumbnails(cmd_tx, clip_id, path.clone(), out_dir);
+            let wf_path = waveform_path(&state.storage.data_dir, clip_id);
+            enqueue_waveform(cmd_tx, clip_id, path, wf_path);
         }
         Event::ClipReady(clip) => {
             let path = clip.path.clone();
@@ -76,7 +78,9 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             models::push_clip(window, data);
             refresh_ruler_from_state(window, state);
             let out_dir = thumbs_dir(&state.storage.data_dir, clip_id);
-            enqueue_thumbnails(cmd_tx, clip_id, path, out_dir);
+            enqueue_thumbnails(cmd_tx, clip_id, path.clone(), out_dir);
+            let wf_path = waveform_path(&state.storage.data_dir, clip_id);
+            enqueue_waveform(cmd_tx, clip_id, path, wf_path);
         }
         Event::Progress { fraction, .. } => window.set_export_progress(fraction),
         Event::Finished { id, output } => {
@@ -198,6 +202,19 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             };
             models::refresh_clip_thumbnails(window, &pl, clip_id);
         }
+        Event::WaveformReady { clip_id, path } => {
+            let pl = {
+                let mut pl = state.playlist.lock().expect("playlist mutex poisoned");
+                for clip in pl.clips_mut() {
+                    if clip.id == clip_id {
+                        clip.waveform_path = Some(path.clone());
+                        break;
+                    }
+                }
+                pl.clone()
+            };
+            models::refresh_clip_thumbnails(window, &pl, clip_id);
+        }
     }
 }
 
@@ -259,6 +276,25 @@ fn enqueue_thumbnails(
         count: 10,
     }) {
         tracing::warn!(error = %err, "failed to enqueue thumbnails");
+    }
+}
+
+fn waveform_path(data_dir: &std::path::Path, clip_id: Uuid) -> PathBuf {
+    data_dir.join("waveforms").join(format!("{clip_id}.bin"))
+}
+
+fn enqueue_waveform(
+    cmd_tx: &mpsc::Sender<Command>,
+    clip_id: Uuid,
+    path: PathBuf,
+    out_path: PathBuf,
+) {
+    if let Err(err) = cmd_tx.try_send(Command::GenerateWaveform {
+        clip_id,
+        path,
+        out_path,
+    }) {
+        tracing::warn!(error = %err, "failed to enqueue waveform");
     }
 }
 

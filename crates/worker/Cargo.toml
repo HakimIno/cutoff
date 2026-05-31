@@ -19,3 +19,4 @@ async-trait.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+ringbuf.workspace = true

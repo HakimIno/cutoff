@@ -1,5 +1,6 @@
 import { Palette } from "../styles/palette.slint";
 import { Theme } from "../styles/theme.slint";
+import { WaveformStrip } from "waveform-strip.slint";
 
 export struct ClipData {
     id: string,
@@ -8,6 +9,8 @@ export struct ClipData {
     resolution: string,
     duration-secs: float,
     thumbnails: [image],
+    waveform-peaks: [float],
+    muted: bool,
 }
 
 component IconAction inherits Rectangle {
@@ -76,7 +79,7 @@ export component ClipBlock inherits Rectangle {
         x: 0;
         y: 22px;
         width: parent.width;
-        height: 58px;
+        height: 42px;
         clip: true;
         background: #000000;
 
@@ -86,9 +89,26 @@ export component ClipBlock inherits Rectangle {
             for thumb[i] in root.data.thumbnails: Image {
                 source: thumb;
                 width: parent.width / max(root.data.thumbnails.length, 1);
-                height: 58px;
+                height: 42px;
                 image-fit: cover;
             }
+        }
+    }
+
+    // Waveform strip beneath the filmstrip.
+    Rectangle {
+        x: 0;
+        y: 64px;
+        width: parent.width;
+        height: 16px;
+        background: Palette.surface;
+        opacity: root.data.muted ? 0.4 : 1.0;
+        WaveformStrip {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            peaks: root.data.waveform-peaks;
         }
     }
 

@@ -1,0 +1,22 @@
+import { Palette } from "../styles/palette.slint";
+
+/// Renders pre-computed waveform peaks as a vertical-bar strip. Peaks are
+/// passed in as a `[float]` of |peak| values in 0..1 (one per visible bucket).
+/// The component scales bars to fit the available height.
+export component WaveformStrip inherits Rectangle {
+    in property <[float]> peaks;
+    in property <color> bar-color: Palette.accent-2;
+    in property <color> bar-color-dim: Palette.accent;
+
+    clip: true;
+    background: transparent;
+
+    for peak[i] in root.peaks: Rectangle {
+        x: i * (root.width / max(root.peaks.length, 1));
+        y: (root.height - self.height) / 2;
+        width: root.width / max(root.peaks.length, 1) - 0.5px;
+        height: max(peak * root.height, 1px);
+        background: root.bar-color;
+        opacity: 0.7;
+    }
+}

@@ -90,6 +90,9 @@ export component AppWindow inherits Window {
     callback load-project();
     callback dismiss-toast();
     callback reveal-in-finder(string);
+    callback toggle-master-mute();
+
+    in property <bool> master-muted;
 
     forward-focus: key-handler;
 
@@ -161,6 +164,10 @@ export component AppWindow inherits Window {
             }
             if (event.text == "o" || event.text == "O") {
                 root.set-out();
+                return accept;
+            }
+            if (event.text == "m" || event.text == "M") {
+                root.toggle-master-mute();
                 return accept;
             }
             return reject;
@@ -259,6 +266,7 @@ export component AppWindow inherits Window {
                 can-export: root.can-export;
                 preview-fps: root.preview-fps;
                 playing: root.playing;
+                master-muted: root.master-muted;
                 export-clicked => { root.export-clicked(); }
                 cancel-clicked => { root.cancel-clicked(); }
             }

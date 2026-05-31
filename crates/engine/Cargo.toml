@@ -21,3 +21,5 @@ serde_json.workspace = true
 uuid.workspace = true
 ffmpeg-next.workspace = true
 image.workspace = true
+cpal.workspace = true
+ringbuf.workspace = true

@@ -3,6 +3,7 @@
 //! The [`MergeEngine`] trait is the only abstraction the rest of the app
 //! depends on; pick a concrete implementation at composition time.
 
+pub mod audio;
 pub mod decoder;
 pub mod ffmpeg;
 pub mod traits;

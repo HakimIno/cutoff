@@ -11,7 +11,10 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc as tokio_mpsc;
 use uuid::Uuid;
+use video_merger_engine::audio::output::AudioOutput;
+use video_merger_engine::audio::FfmpegAudioDecoder;
 use video_merger_engine::decoder::{FfmpegMediaDecoder, MediaDecoder};
+use ringbuf::traits::{Observer, Producer};
 
 use crate::job::Event;
 
@@ -28,6 +31,8 @@ pub enum PreviewCtrl {
     Pause,
     Seek { pts_us: i64 },
     Stop,
+    SetMuted(bool),
+    SetVolume(f32),
 }
 
 pub struct PreviewHandle {
@@ -82,6 +87,35 @@ fn run_preview(
         }
     };
 
+    // Try to open audio alongside video. Silent footage is OK — None just
+    // means "video-only preview".
+    let mut audio_decoder = match FfmpegAudioDecoder::open(&path) {
+        Ok(opt) => opt,
+        Err(e) => {
+            tracing::warn!(error = %e, ?path, "audio open failed; preview will be silent");
+            None
+        }
+    };
+    // Spin up cpal output only when audio exists. The output keeps its own
+    // stream alive for the lifetime of this preview session.
+    let mut audio_out = if audio_decoder.is_some() {
+        match AudioOutput::new() {
+            Ok(o) => Some(o),
+            Err(e) => {
+                tracing::warn!(error = %e, "audio output unavailable; silent preview");
+                audio_decoder = None;
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(ad) = audio_decoder.as_mut() {
+        if bounds.trim_in_us > 0 {
+            let _ = ad.seek_to_us(bounds.trim_in_us);
+        }
+    }
+
     let meta = decoder.meta();
     // Use clip-wall duration_us (post-trim window) so the bridge can map
     // playhead correctly.
@@ -101,8 +135,10 @@ fn run_preview(
     }
 
     // Deliver first frame so the user sees something on selection.
+    let mut last_delivered_pts_us: i64 = 0;
     if let Ok(Some(frame)) = decoder.next_frame() {
         let local = source_pts_to_local(frame.pts_us, bounds);
+        last_delivered_pts_us = local;
         let _ = event_tx.send(Event::FrameReady {
             clip_id,
             frame: remap_pts(frame, local),
@@ -110,8 +146,13 @@ fn run_preview(
     }
 
     let frame_interval = compute_frame_interval(&meta);
+    let frame_interval_us = frame_interval.as_micros() as i64;
     let mut playing = false;
     let mut next_frame_due = Instant::now();
+    // Audio-master clock anchor: `(frames_played_at_anchor, clip_local_pts_at_anchor)`.
+    // Reset on Play/Pause/Seek so cpal's running silence-counter during pause
+    // doesn't get baked into the timing.
+    let mut clock_anchor: Option<(u32, i64)> = None;
 
     loop {
         // Drain controls. When paused, block until a control arrives or channel hangs up.
@@ -134,27 +175,44 @@ fn run_preview(
                 PreviewCtrl::Play => {
                     playing = true;
                     next_frame_due = Instant::now();
+                    clock_anchor = None;
                 }
-                PreviewCtrl::Pause => playing = false,
+                PreviewCtrl::Pause => {
+                    playing = false;
+                    clock_anchor = None;
+                }
                 PreviewCtrl::Seek { pts_us } => {
-                    // pts_us arrives in clip-local time (0 = trim_in). Convert
-                    // to source time before seeking.
                     let target = (bounds.trim_in_us + pts_us)
                         .clamp(bounds.trim_in_us, bounds.trim_out_us - 1);
                     if let Err(e) = decoder.seek_to_us(target) {
                         tracing::warn!(error = %e, "preview seek failed");
                     } else if let Ok(Some(frame)) = decoder.next_frame() {
                         let local = source_pts_to_local(frame.pts_us, bounds);
+                        last_delivered_pts_us = local;
                         let _ = event_tx.send(Event::FrameReady {
                             clip_id,
                             frame: remap_pts(frame, local),
                         });
                     }
+                    if let Some(ad) = audio_decoder.as_mut() {
+                        let _ = ad.seek_to_us(target);
+                    }
                     next_frame_due = Instant::now();
+                    clock_anchor = None;
                 }
                 PreviewCtrl::Stop => {
                     let _ = event_tx.send(Event::PreviewEnded { clip_id });
                     return;
+                }
+                PreviewCtrl::SetMuted(m) => {
+                    if let Some(o) = &audio_out {
+                        o.set_muted(m);
+                    }
+                }
+                PreviewCtrl::SetVolume(v) => {
+                    if let Some(o) = &audio_out {
+                        o.set_volume(v);
+                    }
                 }
             }
             match ctrl_rx.try_recv() {
@@ -168,7 +226,105 @@ fn run_preview(
             continue;
         }
 
-        // Pace frame delivery to native fps.
+        // Keep the audio ring buffer ahead — pump until ≥200ms buffered or EOF.
+        if let (Some(ad), Some(ao)) = (audio_decoder.as_mut(), audio_out.as_mut()) {
+            // Each audio frame is ~ N samples × 2 channels. Push until producer
+            // capacity drops below a low-water mark.
+            const TARGET_BUFFERED: usize = 19_200; // ≈ 200ms @ 48k stereo
+            while ao.producer.vacant_len() > TARGET_BUFFERED {
+                match ad.next_frame() {
+                    Ok(Some(frame)) => {
+                        // Bail when audio passes trim-out so we don't overshoot.
+                        if frame.pts_us >= bounds.trim_out_us {
+                            break;
+                        }
+                        for s in &frame.samples {
+                            if ao.producer.try_push(*s).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "audio decode failed");
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Two pacing strategies:
+        //   * If we have an audio output, video PTS is locked to audio time
+        //     (frames_played / 48_000). Frames decoded ahead are slept on;
+        //     frames decoded behind by more than one frame interval are dropped.
+        //   * Otherwise (silent video / audio open failed), fall back to wall
+        //     clock with `next_frame_due += frame_interval`.
+        if let Some(ao) = audio_out.as_ref() {
+            let anchor = match clock_anchor {
+                Some(a) => a,
+                None => {
+                    let a = (ao.frames_played(), last_delivered_pts_us);
+                    clock_anchor = Some(a);
+                    a
+                }
+            };
+            let frames_now = ao.frames_played();
+            let elapsed_frames = frames_now.wrapping_sub(anchor.0) as i64;
+            let elapsed_us = elapsed_frames * 1_000_000
+                / video_merger_engine::audio::SAMPLE_RATE as i64;
+            let target_local_us = anchor.1 + elapsed_us;
+
+            // Pull next frame; drop late ones (more than 2 frame_intervals behind).
+            let mut got: Option<video_merger_engine::DecodedFrame> = None;
+            let drop_threshold_us = frame_interval_us * 2;
+            loop {
+                match decoder.next_frame() {
+                    Ok(Some(frame)) => {
+                        if frame.pts_us >= bounds.trim_out_us {
+                            let _ = event_tx.send(Event::PreviewEnded { clip_id });
+                            playing = false;
+                            clock_anchor = None;
+                            break;
+                        }
+                        let local = source_pts_to_local(frame.pts_us, bounds);
+                        if local + drop_threshold_us < target_local_us {
+                            continue; // late → drop
+                        }
+                        got = Some(remap_pts(frame, local));
+                        break;
+                    }
+                    Ok(None) => {
+                        let _ = event_tx.send(Event::PreviewEnded { clip_id });
+                        playing = false;
+                        clock_anchor = None;
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "decode error during playback");
+                        let _ = event_tx.send(Event::PreviewEnded { clip_id });
+                        playing = false;
+                        clock_anchor = None;
+                        break;
+                    }
+                }
+            }
+            if let Some(frame) = got {
+                // Sleep if the frame would be ahead of the audio clock.
+                let wait_us = frame.pts_us - target_local_us;
+                if wait_us > 1_500 {
+                    // Cap sleep at 100ms to remain responsive to ctrl messages.
+                    let sleep_us = wait_us.min(100_000) as u64;
+                    thread::sleep(Duration::from_micros(sleep_us));
+                }
+                last_delivered_pts_us = frame.pts_us;
+                if event_tx.send(Event::FrameReady { clip_id, frame }).is_err() {
+                    return;
+                }
+            }
+            continue;
+        }
+
+        // ───────── Fallback: wall-clock pacing (no audio) ─────────
         let now = Instant::now();
         if now < next_frame_due {
             thread::sleep(next_frame_due - now);
@@ -177,13 +333,13 @@ fn run_preview(
 
         match decoder.next_frame() {
             Ok(Some(frame)) => {
-                // Past trim-out → end the preview.
                 if frame.pts_us >= bounds.trim_out_us {
                     let _ = event_tx.send(Event::PreviewEnded { clip_id });
                     playing = false;
                     continue;
                 }
                 let local = source_pts_to_local(frame.pts_us, bounds);
+                last_delivered_pts_us = local;
                 if event_tx
                     .send(Event::FrameReady {
                         clip_id,

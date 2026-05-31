@@ -46,6 +46,16 @@ pub enum Command {
         out_dir: PathBuf,
         count: usize,
     },
+    /// Extract waveform peaks for `clip_id` → write binary cache file.
+    GenerateWaveform {
+        clip_id: ClipId,
+        path: PathBuf,
+        out_path: PathBuf,
+    },
+    /// Toggle master mute on the live audio output.
+    SetMasterMuted(bool),
+    /// Adjust master volume (0.0..=2.0).
+    SetMasterVolume(f32),
     Shutdown,
 }
 
@@ -93,5 +103,9 @@ pub enum Event {
     ThumbnailsReady {
         clip_id: ClipId,
         paths: Vec<PathBuf>,
+    },
+    WaveformReady {
+        clip_id: ClipId,
+        path: PathBuf,
     },
 }

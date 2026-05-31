@@ -248,6 +248,12 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
     {
         let tx = cmd_tx.clone();
         let weak = window.as_weak();
+        let audio = state.audio.clone();
+        window.on_toggle_master_mute(move || on_toggle_master_mute(weak.clone(), tx.clone(), audio.clone()));
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
         let pl = state.playlist.clone();
         let aj = state.active_job.clone();
         let jm = state.job_meta.clone();
@@ -895,6 +901,24 @@ fn on_load_project(
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default()
         )));
+    }
+}
+
+fn on_toggle_master_mute(
+    weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    audio: super::SharedAudio,
+) {
+    let now_muted = {
+        let mut a = audio.lock().expect("audio mutex poisoned");
+        a.master_muted = !a.master_muted;
+        a.master_muted
+    };
+    if let Err(err) = cmd_tx.try_send(Command::SetMasterMuted(now_muted)) {
+        tracing::warn!(error = %err, "set-master-muted failed");
+    }
+    if let Some(window) = weak.upgrade() {
+        window.set_master_muted(now_muted);
     }
 }
 

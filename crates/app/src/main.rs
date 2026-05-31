@@ -81,6 +81,10 @@ fn main() -> Result<()> {
         preview: Arc::new(Mutex::new(Default::default())),
         zoom: Arc::new(Mutex::new(bridge::ZOOM_DEFAULT)),
         undo: Arc::new(Mutex::new(bridge::undo::UndoStack::new())),
+        audio: Arc::new(Mutex::new(bridge::AudioState {
+            master_muted: false,
+            master_volume: 1.0,
+        })),
     };
 
     window.set_px_per_sec(bridge::ZOOM_DEFAULT);

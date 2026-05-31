@@ -24,8 +24,16 @@ pub type SharedConfig = Arc<Mutex<AppConfig>>;
 pub type SharedHistory = Arc<Mutex<History>>;
 pub type SharedPreview = Arc<Mutex<PreviewState>>;
 pub type SharedZoom = Arc<Mutex<f32>>;
+pub type SharedAudio = Arc<Mutex<AudioState>>;
 
 pub use undo::SharedUndo;
+
+#[derive(Debug, Default, Clone)]
+pub struct AudioState {
+    pub master_muted: bool,
+    #[allow(dead_code)]
+    pub master_volume: f32, // 1.0 = unity
+}
 
 /// Metadata captured at export-submission time, looked up when the
 /// terminal event for that job arrives.
@@ -62,6 +70,7 @@ pub struct BridgeState {
     pub preview: SharedPreview,
     pub zoom: SharedZoom,
     pub undo: SharedUndo,
+    pub audio: SharedAudio,
 }
 
 pub const ZOOM_MIN: f32 = 1.0;
