@@ -63,6 +63,27 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             enqueue_thumbnails(cmd_tx, clip_id, path.clone(), out_dir);
             let wf_path = waveform_path(&state.storage.data_dir, clip_id);
             enqueue_waveform(cmd_tx, clip_id, path, wf_path);
+
+            // Sync preview
+            let project = {
+                let pl = state.playlist.lock().expect("playlist mutex poisoned");
+                let ts = state.tracks.lock().expect("tracks mutex poisoned");
+                let mut project = video_merger_core::domain::Project::from_playlist(&pl);
+                for track in &mut project.tracks {
+                    let state_idx = match track.name.as_str() {
+                        "V1" => 0,
+                        "V2" => 1,
+                        "A1" => 2,
+                        "A2" => 3,
+                        _ => continue,
+                    };
+                    track.muted = ts.muted[state_idx];
+                    track.solo = ts.soloed[state_idx];
+                    track.locked = ts.locked[state_idx];
+                }
+                project
+            };
+            let _ = cmd_tx.try_send(Command::OpenPreview { project });
         }
         Event::ClipReady(clip) => {
             let path = clip.path.clone();
@@ -81,6 +102,27 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             enqueue_thumbnails(cmd_tx, clip_id, path.clone(), out_dir);
             let wf_path = waveform_path(&state.storage.data_dir, clip_id);
             enqueue_waveform(cmd_tx, clip_id, path, wf_path);
+
+            // Sync preview
+            let project = {
+                let pl = state.playlist.lock().expect("playlist mutex poisoned");
+                let ts = state.tracks.lock().expect("tracks mutex poisoned");
+                let mut project = video_merger_core::domain::Project::from_playlist(&pl);
+                for track in &mut project.tracks {
+                    let state_idx = match track.name.as_str() {
+                        "V1" => 0,
+                        "V2" => 1,
+                        "A1" => 2,
+                        "A2" => 3,
+                        _ => continue,
+                    };
+                    track.muted = ts.muted[state_idx];
+                    track.solo = ts.soloed[state_idx];
+                    track.locked = ts.locked[state_idx];
+                }
+                project
+            };
+            let _ = cmd_tx.try_send(Command::OpenPreview { project });
         }
         Event::Progress { fraction, .. } => window.set_export_progress(fraction),
         Event::Finished { id, output } => {
@@ -110,15 +152,11 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             window.set_status_text("Cancelled".into());
         }
         Event::PreviewOpened {
-            clip_id,
             duration_us,
             ..
         } => {
             let pending = {
                 let mut pv = state.preview.lock().expect("preview mutex poisoned");
-                if pv.clip_id != Some(clip_id) {
-                    return;
-                }
                 pv.duration_us = duration_us;
                 pv.pending_seek_us.take()
             };
@@ -128,39 +166,29 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
                 }
             }
         }
-        Event::FrameReady { clip_id, frame } => {
-            let (matches, fps) = {
+        Event::FrameReady { frame, .. } => {
+            let fps = {
                 let mut pv = state.preview.lock().expect("preview mutex poisoned");
-                if pv.clip_id != Some(clip_id) {
-                    (false, 0.0)
-                } else {
-                    pv.playhead_us = frame.pts_us;
-                    // Rolling FPS over the last 1 second.
-                    let now = std::time::Instant::now();
-                    pv.frame_history.push_back(now);
-                    let one_sec = std::time::Duration::from_secs(1);
-                    while let Some(t) = pv.frame_history.front() {
-                        if now.duration_since(*t) > one_sec {
-                            pv.frame_history.pop_front();
-                        } else {
-                            break;
-                        }
+                pv.playhead_us = frame.pts_us;
+                // Rolling FPS over the last 1 second.
+                let now = std::time::Instant::now();
+                pv.frame_history.push_back(now);
+                let one_sec = std::time::Duration::from_secs(1);
+                while let Some(t) = pv.frame_history.front() {
+                    if now.duration_since(*t) > one_sec {
+                        pv.frame_history.pop_front();
+                    } else {
+                        break;
                     }
-                    (true, pv.frame_history.len() as f32)
                 }
+                pv.frame_history.len() as f32
             };
-            if !matches {
-                return;
-            }
             window.set_preview_fps(fps);
-            // Timeline-global playhead: (clip_offset + local_pts) / total
+            // Timeline-global playhead: frame.pts_us is already timeline-absolute!
             let (global_fraction, global_us) = {
                 let pl = state.playlist.lock().expect("playlist mutex poisoned");
                 let total_us = timeline_view::total_duration_us(&pl);
-                let offset_us = timeline_view::selected_clip_window(&pl, Some(clip_id))
-                    .map(|(off, _)| off)
-                    .unwrap_or(0);
-                let abs_us = offset_us + frame.pts_us;
+                let abs_us = frame.pts_us;
                 if total_us > 0 {
                     ((abs_us as f64 / total_us as f64) as f32, abs_us)
                 } else {
@@ -173,21 +201,14 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             ));
             window.set_playhead_fraction(global_fraction.clamp(0.0, 1.0));
         }
-        Event::PreviewEnded { clip_id } => {
-            let matches = {
+        Event::PreviewEnded { .. } => {
+            {
                 let mut pv = state.preview.lock().expect("preview mutex poisoned");
-                if pv.clip_id != Some(clip_id) {
-                    false
-                } else {
-                    pv.playing = false;
-                    pv.frame_history.clear();
-                    true
-                }
-            };
-            if matches {
-                window.set_playing(false);
-                window.set_preview_fps(0.0);
+                pv.playing = false;
+                pv.frame_history.clear();
             }
+            window.set_playing(false);
+            window.set_preview_fps(0.0);
         }
         Event::ThumbnailsReady { clip_id, paths } => {
             let pl = {

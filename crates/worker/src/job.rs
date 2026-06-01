@@ -26,10 +26,7 @@ pub enum Command {
     /// `trim_in_us` / `trim_out_us` bound playback and seeking; pass 0 / source_duration
     /// when the clip is untrimmed.
     OpenPreview {
-        clip_id: ClipId,
-        path: PathBuf,
-        trim_in_us: i64,
-        trim_out_us: i64,
+        project: Project,
     },
     /// Start playing the active preview at native frame rate.
     PlayPreview,

@@ -3,15 +3,13 @@
 //! Each preview session owns:
 //!   * a **video thread** that decodes frames and paces delivery to the UI
 //!     using the audio clock (or wall-clock fallback);
-//!   * an **audio thread** (optional, only when the source has audio) that
+//!   * an **audio thread** (optional) that
 //!     owns the `!Send` cpal `Stream` and feeds the ring buffer continuously.
 //!
-//! The two threads run in true parallel: ffmpeg video decode (which is itself
-//! multi-threaded internally) never blocks audio decode and vice versa.
 //! Coordination is by `std::sync::mpsc` control channels + the shared
 //! `Arc<AtomicU32>` audio clock from `AudioOutput`.
 
-use std::path::PathBuf;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
@@ -21,18 +19,12 @@ use std::time::{Duration, Instant};
 use ringbuf::traits::{Observer, Producer};
 use tokio::sync::mpsc as tokio_mpsc;
 use uuid::Uuid;
+use video_merger_core::domain::{Project, TrackClip};
 use video_merger_engine::audio::output::AudioOutput;
 use video_merger_engine::audio::FfmpegAudioDecoder;
-use video_merger_engine::decoder::{FfmpegMediaDecoder, MediaDecoder};
+use video_merger_engine::decoder::{FfmpegMediaDecoder, MediaDecoder, DecodedFrame};
 
 use crate::job::Event;
-
-/// Trim bounds for the preview session.
-#[derive(Debug, Clone, Copy)]
-pub struct PreviewBounds {
-    pub trim_in_us: i64,
-    pub trim_out_us: i64,
-}
 
 #[derive(Debug)]
 pub enum PreviewCtrl {
@@ -42,6 +34,7 @@ pub enum PreviewCtrl {
     Stop,
     SetMuted(bool),
     SetVolume(f32),
+    UpdateProject(Project),
 }
 
 // ── Internal per-thread message types ─────────────────────────────────────
@@ -51,6 +44,7 @@ enum VideoCtrl {
     Pause,
     Seek(i64),
     Stop,
+    UpdateProject(Project),
 }
 
 enum AudioCtrl {
@@ -60,6 +54,7 @@ enum AudioCtrl {
     Stop,
     SetMuted(bool),
     SetVolume(f32),
+    UpdateProject(Project),
 }
 
 pub struct PreviewHandle {
@@ -106,39 +101,44 @@ impl PreviewHandle {
                     let _ = tx.send(AudioCtrl::SetVolume(v));
                 }
             }
+            PreviewCtrl::UpdateProject(project) => {
+                let _ = self.video_tx.send(VideoCtrl::UpdateProject(project.clone()));
+                if let Some(tx) = &self.audio_tx {
+                    let _ = tx.send(AudioCtrl::UpdateProject(project));
+                }
+            }
         }
     }
 }
 
 /// Spawn the preview threads, returning the control handle.
 pub fn spawn_preview(
-    clip_id: Uuid,
-    path: PathBuf,
-    bounds: PreviewBounds,
+    project: Project,
     event_tx: tokio_mpsc::UnboundedSender<Event>,
 ) -> PreviewHandle {
-    // Try to set up audio first so we can hand the clock atomic to the video
-    // thread. An open failure (no audio stream or device unavailable) is
-    // non-fatal — preview falls back to silent + wall-clock pacing.
-    let (audio_tx, audio_join, audio_clock) = match try_open_audio(&path, bounds) {
-        Some((decoder, output)) => {
+    let (audio_tx, audio_join, audio_clock) = match AudioOutput::new() {
+        Ok(output) => {
             let clock = output.frames_played_handle();
             let (tx, rx) = std_mpsc::channel::<AudioCtrl>();
-            let bounds_a = bounds;
+            let proj_a = project.clone();
             let join = thread::Builder::new()
                 .name("cutoff-preview-audio".into())
-                .spawn(move || audio_loop(decoder, output, bounds_a, rx))
+                .spawn(move || audio_loop(proj_a, output, rx))
                 .expect("audio preview thread spawn");
             (Some(tx), Some(join), Some(clock))
         }
-        None => (None, None, None),
+        Err(e) => {
+            tracing::warn!(error = %e, "audio output unavailable");
+            (None, None, None)
+        }
     };
 
     let (video_tx, video_rx) = std_mpsc::channel::<VideoCtrl>();
+    let proj_v = project;
     let video_join = thread::Builder::new()
         .name("cutoff-preview-video".into())
         .spawn(move || {
-            video_loop(clip_id, path, bounds, video_rx, event_tx, audio_clock);
+            video_loop(proj_v, video_rx, event_tx, audio_clock);
         })
         .expect("video preview thread spawn");
 
@@ -150,49 +150,202 @@ pub fn spawn_preview(
     }
 }
 
-// ── Audio thread ──────────────────────────────────────────────────────────
+// ── Decoder Wrapping structures ──────────────────────────────────────────
 
-fn try_open_audio(
-    path: &std::path::Path,
-    bounds: PreviewBounds,
-) -> Option<(FfmpegAudioDecoder, AudioOutput)> {
-    let mut decoder = match FfmpegAudioDecoder::open(path) {
-        Ok(Some(d)) => d,
-        Ok(None) => return None, // silent footage
-        Err(e) => {
-            tracing::warn!(error = %e, "audio open failed");
-            return None;
-        }
-    };
-    let output = match AudioOutput::new() {
-        Ok(o) => o,
-        Err(e) => {
-            tracing::warn!(error = %e, "audio output unavailable");
-            return None;
-        }
-    };
-    if bounds.trim_in_us > 0 {
-        let _ = decoder.seek_to_us(bounds.trim_in_us);
-    }
-    Some((decoder, output))
+struct DecoderState {
+    decoder: FfmpegMediaDecoder,
+    last_pts_us: Option<i64>,
 }
 
+impl DecoderState {
+    fn new(decoder: FfmpegMediaDecoder) -> Self {
+        Self {
+            decoder,
+            last_pts_us: None,
+        }
+    }
+
+    fn get_frame_at(&mut self, target_us: i64) -> Option<DecodedFrame> {
+        let threshold_us = 200_000; // 200ms
+        
+        let needs_seek = match self.last_pts_us {
+            None => true,
+            Some(last) => {
+                target_us < last || target_us - last > threshold_us
+            }
+        };
+        
+        if needs_seek {
+            if let Err(e) = self.decoder.seek_to_us(target_us) {
+                tracing::warn!("Seek failed: {}", e);
+                return None;
+            }
+            self.last_pts_us = None;
+        }
+        
+        let mut best_frame: Option<DecodedFrame> = None;
+        loop {
+            match self.decoder.next_frame() {
+                Ok(Some(frame)) => {
+                    self.last_pts_us = Some(frame.pts_us);
+                    if frame.pts_us >= target_us {
+                        if let Some(prev) = best_frame {
+                            if (target_us - prev.pts_us).abs() < (frame.pts_us - target_us).abs() {
+                                return Some(prev);
+                            }
+                        }
+                        return Some(frame);
+                    }
+                    best_frame = Some(frame);
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::warn!("Decode frame failed: {}", e);
+                    break;
+                }
+            }
+        }
+        best_frame
+    }
+}
+
+struct AudioDecoderState {
+    decoder: FfmpegAudioDecoder,
+    buffer: Vec<f32>,
+    current_time_us: i64,
+}
+
+impl AudioDecoderState {
+    fn new(decoder: FfmpegAudioDecoder, initial_time_us: i64) -> Self {
+        Self {
+            decoder,
+            buffer: Vec::new(),
+            current_time_us: initial_time_us,
+        }
+    }
+
+    fn seek_to(&mut self, timeline_time_us: i64, clip_start_us: i64, clip_trim_in_us: i64) {
+        let target_src_us = timeline_time_us - clip_start_us + clip_trim_in_us;
+        let target_src_us = target_src_us.max(0);
+        if let Err(e) = self.decoder.seek_to_us(target_src_us) {
+            tracing::warn!("Audio seek failed: {}", e);
+        }
+        self.buffer.clear();
+        self.current_time_us = timeline_time_us;
+    }
+
+    fn read_samples(
+        &mut self,
+        n_samples: usize,
+        clip_start_us: i64,
+        clip_trim_in_us: i64,
+        clip_trim_out_us: i64,
+    ) -> Vec<f32> {
+        let sample_duration_us = 1_000_000.0 / 48000.0;
+        
+        while self.buffer.len() < n_samples * 2 {
+            let current_src_us = self.current_time_us - clip_start_us + clip_trim_in_us;
+            if current_src_us >= clip_trim_out_us {
+                break;
+            }
+            
+            match self.decoder.next_frame() {
+                Ok(Some(frame)) => {
+                    self.buffer.extend_from_slice(&frame.samples);
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    tracing::warn!("Audio decode failed: {}", e);
+                    break;
+                }
+            }
+        }
+        
+        let to_take = (n_samples * 2).min(self.buffer.len());
+        let mut samples = self.buffer.drain(..to_take).collect::<Vec<f32>>();
+        
+        if samples.len() < n_samples * 2 {
+            samples.resize(n_samples * 2, 0.0);
+        }
+        
+        self.current_time_us += (n_samples as f64 * sample_duration_us) as i64;
+        samples
+    }
+}
+
+// ── Alpha Compositing & Resizing ──────────────────────────────────────────
+
+fn resize_rgba(src: &[u8], src_w: usize, src_h: usize, dest: &mut [u8], dest_w: usize, dest_h: usize) {
+    for dy in 0..dest_h {
+        let sy = (dy * src_h) / dest_h;
+        let src_row_offset = sy * src_w * 4;
+        let dest_row_offset = dy * dest_w * 4;
+        for dx in 0..dest_w {
+            let sx = (dx * src_w) / dest_w;
+            let src_idx = src_row_offset + sx * 4;
+            let dest_idx = dest_row_offset + dx * 4;
+            dest[dest_idx..dest_idx + 4].copy_from_slice(&src[src_idx..src_idx + 4]);
+        }
+    }
+}
+
+fn composite_rgba(base: &mut [u8], overlay: &[u8]) {
+    assert_eq!(base.len(), overlay.len());
+    for i in (0..base.len()).step_by(4) {
+        let a_overlay = overlay[i + 3];
+        if a_overlay == 0 {
+            continue;
+        } else if a_overlay == 255 {
+            base[i] = overlay[i];
+            base[i + 1] = overlay[i + 1];
+            base[i + 2] = overlay[i + 2];
+            base[i + 3] = overlay[i + 3];
+        } else {
+            let alpha = a_overlay as f32 / 255.0;
+            let inv_alpha = 1.0 - alpha;
+            base[i] = (overlay[i] as f32 * alpha + base[i] as f32 * inv_alpha) as u8;
+            base[i + 1] = (overlay[i + 1] as f32 * alpha + base[i + 1] as f32 * inv_alpha) as u8;
+            base[i + 2] = (overlay[i + 2] as f32 * alpha + base[i + 2] as f32 * inv_alpha) as u8;
+            let a_base = base[i + 3] as f32 / 255.0;
+            let combined_a = alpha + a_base * inv_alpha;
+            base[i + 3] = (combined_a * 255.0) as u8;
+        }
+    }
+}
+
+fn active_audio_clips_in_range(
+    project: &Project,
+    start_us: i64,
+    end_us: i64,
+) -> Vec<(usize, &TrackClip)> {
+    let mut result = Vec::new();
+    for (track_idx, track) in project.tracks.iter().enumerate() {
+        for tc in &track.clips {
+            let tc_end = tc.end_us();
+            if start_us < tc_end && tc.start_us < end_us {
+                result.push((track_idx, tc));
+            }
+        }
+    }
+    result
+}
+
+// ── Audio Thread Loop ─────────────────────────────────────────────────────
+
 fn audio_loop(
-    mut decoder: FfmpegAudioDecoder,
+    mut project: Project,
     mut output: AudioOutput,
-    bounds: PreviewBounds,
     ctrl_rx: std_mpsc::Receiver<AudioCtrl>,
 ) {
     let mut playing = false;
-    /// Refill threshold (≈200 ms of stereo @ 48k).
+    let mut playhead_us: i64 = 0;
+    let mut audio_decoders: HashMap<Uuid, AudioDecoderState> = HashMap::new();
+    let mut staging: Vec<f32> = Vec::new();
+
     const TARGET_BUFFERED: usize = 19_200;
-    /// Bulk batch (≈40 ms of stereo @ 48k) — amortizes per-sample atomic cost.
     const BATCH_SAMPLES: usize = 3_840;
 
-    let mut staging: Vec<f32> = Vec::with_capacity(BATCH_SAMPLES);
-
     loop {
-        // Drain controls. Block when paused (no audio work to do).
         let first_ctrl = if playing {
             match ctrl_rx.try_recv() {
                 Ok(c) => Some(c),
@@ -212,14 +365,25 @@ fn audio_loop(
                 AudioCtrl::Play => playing = true,
                 AudioCtrl::Pause => playing = false,
                 AudioCtrl::Seek(pts_us) => {
-                    let target = (bounds.trim_in_us + pts_us)
-                        .clamp(bounds.trim_in_us, bounds.trim_out_us - 1);
-                    let _ = decoder.seek_to_us(target);
+                    let duration_us = project.duration_us();
+                    playhead_us = pts_us.clamp(0, duration_us.max(0));
                     staging.clear();
+                    // Seek all warm decoders to align with playhead_us
+                    for (id, state) in &mut audio_decoders {
+                        if let Some((track_idx, clip_idx)) = project.find_clip(*id) {
+                            let tc = &project.tracks[track_idx].clips[clip_idx];
+                            state.seek_to(playhead_us, tc.start_us, tc.clip.trim_in_us());
+                        }
+                    }
                 }
                 AudioCtrl::Stop => return,
                 AudioCtrl::SetMuted(m) => output.set_muted(m),
                 AudioCtrl::SetVolume(v) => output.set_volume(v),
+                AudioCtrl::UpdateProject(proj) => {
+                    project = proj;
+                    let active_ids: std::collections::HashSet<Uuid> = project.all_clips().map(|c| c.id).collect();
+                    audio_decoders.retain(|id, _| active_ids.contains(id));
+                }
             }
             match ctrl_rx.try_recv() {
                 Ok(c) => maybe = Some(c),
@@ -232,41 +396,72 @@ fn audio_loop(
             continue;
         }
 
-        // Push pending staged samples (carry-over from last iteration).
         if !staging.is_empty() {
             let pushed = output.producer.push_slice(&staging);
             staging.drain(..pushed);
         }
 
-        // Pump until we have ≥200ms buffered or hit EOF/trim-out.
         let mut hit_end = false;
+        let project_duration_us = project.duration_us();
+
         while output.producer.vacant_len() > TARGET_BUFFERED {
-            match decoder.next_frame() {
-                Ok(Some(frame)) => {
-                    if frame.pts_us >= bounds.trim_out_us {
-                        hit_end = true;
-                        break;
+            let n_frames = BATCH_SAMPLES / 2;
+            let sample_duration_us = 1_000_000.0 / 48000.0;
+            let duration_us = (n_frames as f64 * sample_duration_us) as i64;
+            let t_start_us = playhead_us;
+            let t_end_us = t_start_us + duration_us;
+
+            let mut mixed = vec![0.0f32; BATCH_SAMPLES];
+            let active = active_audio_clips_in_range(&project, t_start_us, t_end_us);
+
+            for (track_idx, tc) in active {
+                let track = &project.tracks[track_idx];
+                if track.muted {
+                    continue;
+                }
+
+                let state = match audio_decoders.get_mut(&tc.clip.id) {
+                    Some(s) => s,
+                    None => {
+                        match FfmpegAudioDecoder::open(&tc.clip.path) {
+                            Ok(Some(decoder)) => {
+                                audio_decoders.insert(tc.clip.id, AudioDecoderState::new(decoder, t_start_us));
+                                audio_decoders.get_mut(&tc.clip.id).unwrap()
+                            }
+                            _ => continue,
+                        }
                     }
-                    let pushed = output.producer.push_slice(&frame.samples);
-                    if pushed < frame.samples.len() {
-                        // Producer filled mid-batch — stash the rest.
-                        staging.extend_from_slice(&frame.samples[pushed..]);
-                        break;
-                    }
+                };
+
+                if (state.current_time_us - t_start_us).abs() > 10_000 {
+                    state.seek_to(t_start_us, tc.start_us, tc.clip.trim_in_us());
                 }
-                Ok(None) => {
-                    hit_end = true;
-                    break;
+
+                let samples = state.read_samples(n_frames, tc.start_us, tc.clip.trim_in_us(), tc.clip.trim_out_us());
+                let volume = if tc.clip.muted { 0.0 } else { tc.clip.volume };
+                for (j, sample) in samples.iter().enumerate() {
+                    mixed[j] += sample * volume;
                 }
-                Err(e) => {
-                    tracing::warn!(error = %e, "audio decode failed");
-                    break;
-                }
+            }
+
+            for sample in &mut mixed {
+                *sample = sample.clamp(-1.0, 1.0);
+            }
+
+            let pushed = output.producer.push_slice(&mixed);
+            if pushed < mixed.len() {
+                staging.extend_from_slice(&mixed[pushed..]);
+                break;
+            }
+
+            playhead_us += duration_us;
+
+            if playhead_us >= project_duration_us {
+                hit_end = true;
+                break;
             }
         }
 
-        // Buffer healthy or EOF — yield CPU. cpal callback drains roughly
-        // every 10–20ms so a 10ms sleep keeps us comfortably ahead.
         thread::sleep(if hit_end {
             Duration::from_millis(50)
         } else {
@@ -275,60 +470,64 @@ fn audio_loop(
     }
 }
 
-// ── Video thread ──────────────────────────────────────────────────────────
+// ── Video Thread Loop ─────────────────────────────────────────────────────
 
 fn video_loop(
-    clip_id: Uuid,
-    path: PathBuf,
-    bounds: PreviewBounds,
+    mut project: Project,
     ctrl_rx: std_mpsc::Receiver<VideoCtrl>,
     event_tx: tokio_mpsc::UnboundedSender<Event>,
     audio_clock: Option<Arc<AtomicU32>>,
 ) {
-    let mut decoder = match FfmpegMediaDecoder::open(&path) {
-        Ok(d) => d,
-        Err(e) => {
-            let _ = event_tx.send(Event::Failed {
-                id: clip_id,
-                message: format!("open preview: {e}"),
-            });
-            return;
+    let mut decoders: HashMap<Uuid, DecoderState> = HashMap::new();
+    let mut playing = false;
+    let mut last_delivered_pts_us: i64 = 0;
+    let mut clock_anchor: Option<(u32, i64)> = None;
+
+    let get_preview_meta = |proj: &Project| {
+        if let Some(clip) = proj.all_clips().next() {
+            (
+                clip.info.profile.resolution.width,
+                clip.info.profile.resolution.height,
+                clip.info.profile.frame_rate_mhz as i32,
+                1000,
+            )
+        } else {
+            (1280, 720, 30, 1)
         }
     };
 
-    let meta = decoder.meta();
-    let effective_duration_us = (bounds.trim_out_us - bounds.trim_in_us).max(0);
+    let (mut width, mut height, mut fps_num, mut fps_den) = get_preview_meta(&project);
+    let mut project_duration_us = project.duration_us();
+    let mut frame_interval = Duration::from_secs_f32(fps_den as f32 / fps_num as f32);
+    let mut next_frame_due = Instant::now();
+
+    // Send initial PreviewOpened event
     let _ = event_tx.send(Event::PreviewOpened {
-        clip_id,
-        duration_us: effective_duration_us,
-        width: decoder.width(),
-        height: decoder.height(),
-        frame_rate_num: meta.frame_rate_num,
-        frame_rate_den: meta.frame_rate_den,
+        clip_id: Uuid::nil(),
+        duration_us: project_duration_us,
+        width,
+        height,
+        frame_rate_num: fps_num,
+        frame_rate_den: fps_den,
     });
 
-    if bounds.trim_in_us > 0 {
-        let _ = decoder.seek_to_us(bounds.trim_in_us);
+    // Send initial black frame
+    let mut initial_rgba = vec![0u8; (width * height * 4) as usize];
+    for i in (0..initial_rgba.len()).step_by(4) {
+        initial_rgba[i + 3] = 255;
     }
-
-    let mut last_delivered_pts_us: i64 = 0;
-    if let Ok(Some(frame)) = decoder.next_frame() {
-        let local = source_pts_to_local(frame.pts_us, bounds);
-        last_delivered_pts_us = local;
-        let _ = event_tx.send(Event::FrameReady {
-            clip_id,
-            frame: remap_pts(frame, local),
-        });
-    }
-
-    let frame_interval = compute_frame_interval(&meta);
-    let frame_interval_us = frame_interval.as_micros() as i64;
-    let mut playing = false;
-    let mut next_frame_due = Instant::now();
-    let mut clock_anchor: Option<(u32, i64)> = None;
+    let frame = DecodedFrame {
+        width,
+        height,
+        pts_us: 0,
+        rgba: initial_rgba.into(),
+    };
+    let _ = event_tx.send(Event::FrameReady {
+        clip_id: Uuid::nil(),
+        frame,
+    });
 
     loop {
-        // Drain controls. Block when paused.
         let first_ctrl = if playing {
             match ctrl_rx.try_recv() {
                 Ok(c) => Some(c),
@@ -355,24 +554,41 @@ fn video_loop(
                     clock_anchor = None;
                 }
                 VideoCtrl::Seek(pts_us) => {
-                    let target = (bounds.trim_in_us + pts_us)
-                        .clamp(bounds.trim_in_us, bounds.trim_out_us - 1);
-                    if let Err(e) = decoder.seek_to_us(target) {
-                        tracing::warn!(error = %e, "preview seek failed");
-                    } else if let Ok(Some(frame)) = decoder.next_frame() {
-                        let local = source_pts_to_local(frame.pts_us, bounds);
-                        last_delivered_pts_us = local;
-                        let _ = event_tx.send(Event::FrameReady {
-                            clip_id,
-                            frame: remap_pts(frame, local),
-                        });
-                    }
-                    next_frame_due = Instant::now();
+                    last_delivered_pts_us = pts_us.clamp(0, project_duration_us.max(0));
                     clock_anchor = None;
+                    next_frame_due = Instant::now();
+
+                    // Render seeker frame immediately
+                    let mut session = VideoSession { project: project.clone(), decoders };
+                    let rgba = render_timeline_frame(&mut session, last_delivered_pts_us, width, height);
+                    decoders = session.decoders;
+                    let frame = DecodedFrame {
+                        width,
+                        height,
+                        pts_us: last_delivered_pts_us,
+                        rgba: rgba.into(),
+                    };
+                    let _ = event_tx.send(Event::FrameReady {
+                        clip_id: Uuid::nil(),
+                        frame,
+                    });
                 }
                 VideoCtrl::Stop => {
-                    let _ = event_tx.send(Event::PreviewEnded { clip_id });
+                    let _ = event_tx.send(Event::PreviewEnded { clip_id: Uuid::nil() });
                     return;
+                }
+                VideoCtrl::UpdateProject(proj) => {
+                    project = proj;
+                    project_duration_us = project.duration_us();
+                    let (w, h, fn_val, fd_val) = get_preview_meta(&project);
+                    width = w;
+                    height = h;
+                    fps_num = fn_val;
+                    fps_den = fd_val;
+                    frame_interval = Duration::from_secs_f32(fps_den as f32 / fps_num as f32);
+
+                    let active_ids: std::collections::HashSet<Uuid> = project.all_clips().map(|c| c.id).collect();
+                    decoders.retain(|id, _| active_ids.contains(id));
                 }
             }
             match ctrl_rx.try_recv() {
@@ -387,7 +603,6 @@ fn video_loop(
         }
 
         if let Some(clock) = audio_clock.as_ref() {
-            // Audio-master clock pacing.
             let anchor = match clock_anchor {
                 Some(a) => a,
                 None => {
@@ -401,125 +616,132 @@ fn video_loop(
                 / video_merger_engine::audio::SAMPLE_RATE as i64;
             let target_local_us = anchor.1 + elapsed_us;
 
-            // ── Smart seek when far behind ────────────────────────────────
-            // Decode-and-drop is fine for a few frames; if we're > 500 ms
-            // behind, seeking saves an arbitrary amount of decode work.
-            if target_local_us - last_delivered_pts_us > 500_000 {
-                let seek_source = (bounds.trim_in_us + target_local_us - 100_000)
-                    .clamp(bounds.trim_in_us, bounds.trim_out_us - 1);
-                if decoder.seek_to_us(seek_source).is_ok() {
-                    last_delivered_pts_us = source_pts_to_local(seek_source, bounds);
-                }
+            if target_local_us >= project_duration_us {
+                let _ = event_tx.send(Event::PreviewEnded { clip_id: Uuid::nil() });
+                playing = false;
+                clock_anchor = None;
+                continue;
             }
 
-            // Pull next frame; drop late ones (more than 2 frame intervals behind).
-            let mut got: Option<video_merger_engine::DecodedFrame> = None;
-            let drop_threshold_us = frame_interval_us * 2;
-            loop {
-                match decoder.next_frame() {
-                    Ok(Some(frame)) => {
-                        if frame.pts_us >= bounds.trim_out_us {
-                            let _ = event_tx.send(Event::PreviewEnded { clip_id });
-                            playing = false;
-                            clock_anchor = None;
-                            break;
-                        }
-                        let local = source_pts_to_local(frame.pts_us, bounds);
-                        if local + drop_threshold_us < target_local_us {
-                            continue;
-                        }
-                        got = Some(remap_pts(frame, local));
-                        break;
-                    }
-                    Ok(None) => {
-                        let _ = event_tx.send(Event::PreviewEnded { clip_id });
-                        playing = false;
-                        clock_anchor = None;
-                        break;
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "decode error during playback");
-                        let _ = event_tx.send(Event::PreviewEnded { clip_id });
-                        playing = false;
-                        clock_anchor = None;
-                        break;
-                    }
-                }
+            if target_local_us - last_delivered_pts_us > 200_000 {
+                // Audio is far ahead (or we seeked), skip to target_local_us
+                last_delivered_pts_us = target_local_us;
             }
-            if let Some(frame) = got {
-                let wait_us = frame.pts_us - target_local_us;
-                if wait_us > 1_500 {
-                    let sleep_us = wait_us.min(100_000) as u64;
-                    thread::sleep(Duration::from_micros(sleep_us));
-                }
-                last_delivered_pts_us = frame.pts_us;
-                if event_tx.send(Event::FrameReady { clip_id, frame }).is_err() {
-                    return;
-                }
+
+            let frame_duration_us = frame_interval.as_micros() as i64;
+            let time_since_last_frame = target_local_us - last_delivered_pts_us;
+            if time_since_last_frame < frame_duration_us {
+                let wait_us = frame_duration_us - time_since_last_frame;
+                thread::sleep(Duration::from_micros((wait_us.min(10_000)) as u64));
+                continue;
+            }
+
+            // Render and send frame
+            let mut session = VideoSession { project: project.clone(), decoders };
+            let rgba = render_timeline_frame(&mut session, target_local_us, width, height);
+            decoders = session.decoders;
+            let frame = DecodedFrame {
+                width,
+                height,
+                pts_us: target_local_us,
+                rgba: rgba.into(),
+            };
+            last_delivered_pts_us = target_local_us;
+            if event_tx.send(Event::FrameReady { clip_id: Uuid::nil(), frame }).is_err() {
+                return;
             }
             continue;
         }
 
-        // ── Fallback: wall-clock pacing (no audio) ────────────────────────
+        // Fallback: Wall-clock pacing
         let now = Instant::now();
         if now < next_frame_due {
             thread::sleep(next_frame_due - now);
         }
         next_frame_due += frame_interval;
 
-        match decoder.next_frame() {
-            Ok(Some(frame)) => {
-                if frame.pts_us >= bounds.trim_out_us {
-                    let _ = event_tx.send(Event::PreviewEnded { clip_id });
-                    playing = false;
-                    continue;
-                }
-                let local = source_pts_to_local(frame.pts_us, bounds);
-                last_delivered_pts_us = local;
-                if event_tx
-                    .send(Event::FrameReady {
-                        clip_id,
-                        frame: remap_pts(frame, local),
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Ok(None) => {
-                let _ = event_tx.send(Event::PreviewEnded { clip_id });
-                playing = false;
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "decode error during playback");
-                let _ = event_tx.send(Event::PreviewEnded { clip_id });
-                playing = false;
-            }
+        let target_local_us = last_delivered_pts_us + frame_interval.as_micros() as i64;
+        if target_local_us >= project_duration_us {
+            let _ = event_tx.send(Event::PreviewEnded { clip_id: Uuid::nil() });
+            playing = false;
+            continue;
+        }
+
+        let mut session = VideoSession { project: project.clone(), decoders };
+        let rgba = render_timeline_frame(&mut session, target_local_us, width, height);
+        decoders = session.decoders;
+        let frame = DecodedFrame {
+            width,
+            height,
+            pts_us: target_local_us,
+            rgba: rgba.into(),
+        };
+        last_delivered_pts_us = target_local_us;
+        if event_tx.send(Event::FrameReady { clip_id: Uuid::nil(), frame }).is_err() {
+            return;
         }
     }
 }
 
-// ── Shared helpers ────────────────────────────────────────────────────────
-
-fn compute_frame_interval(meta: &video_merger_engine::decoder::StreamMeta) -> Duration {
-    let fps = meta.frame_rate_f32();
-    if fps > 1.0 && fps < 240.0 {
-        Duration::from_secs_f32(1.0 / fps)
-    } else {
-        Duration::from_millis(33) // ~30fps fallback
-    }
+struct VideoSession {
+    project: Project,
+    decoders: HashMap<Uuid, DecoderState>,
 }
 
-fn source_pts_to_local(source_pts_us: i64, bounds: PreviewBounds) -> i64 {
-    (source_pts_us - bounds.trim_in_us).max(0)
-}
-
-fn remap_pts(
-    frame: video_merger_engine::decoder::DecodedFrame,
-    new_pts_us: i64,
-) -> video_merger_engine::decoder::DecodedFrame {
-    video_merger_engine::decoder::DecodedFrame {
-        pts_us: new_pts_us,
-        ..frame
+fn render_timeline_frame(
+    session: &mut VideoSession,
+    t_us: i64,
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
+    let mut canvas = vec![0u8; (width * height * 4) as usize];
+    for i in (0..canvas.len()).step_by(4) {
+        canvas[i + 3] = 255;
     }
+    let mut active = video_merger_engine::composite::active_clips_at(&session.project, t_us);
+    
+    active.sort_by_key(|(track_idx, _)| {
+        let name = &session.project.tracks[*track_idx].name;
+        match name.as_str() {
+            "V1" => 0,
+            "V2" => 1,
+            _ => 0,
+        }
+    });
+
+    for (track_idx, tc) in active {
+        let track = &session.project.tracks[track_idx];
+        if track.muted {
+            continue;
+        }
+        
+        let state = match session.decoders.get_mut(&tc.clip.id) {
+            Some(s) => s,
+            None => {
+                match FfmpegMediaDecoder::open(&tc.clip.path) {
+                    Ok(dec) => {
+                        session.decoders.insert(tc.clip.id, DecoderState::new(dec));
+                        session.decoders.get_mut(&tc.clip.id).unwrap()
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to open video decoder for clip {}: {}", tc.clip.id, e);
+                        continue;
+                    }
+                }
+            }
+        };
+        
+        let target_src_us = t_us - tc.start_us + tc.clip.trim_in_us();
+        if let Some(frame) = state.get_frame_at(target_src_us) {
+            if frame.width != width || frame.height != height {
+                let mut resized = vec![0u8; (width * height * 4) as usize];
+                resize_rgba(&frame.rgba, frame.width as usize, frame.height as usize, &mut resized, width as usize, height as usize);
+                composite_rgba(&mut canvas, &resized);
+            } else {
+                composite_rgba(&mut canvas, &frame.rgba);
+            }
+        }
+    }
+    
+    canvas
 }

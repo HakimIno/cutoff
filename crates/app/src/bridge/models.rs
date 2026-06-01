@@ -76,6 +76,7 @@ pub fn push_clip(window: &AppWindow, data: ClipData) {
     let model = window.get_clips();
     if let Some(vm) = model.as_any().downcast_ref::<VecModel<ClipData>>() {
         vm.push(data.clone());
+        window.set_clip_count(vm.row_count() as i32);
     }
     // Mirror into the corresponding per-track lane.
     let lane = match data.video_track {
@@ -103,6 +104,7 @@ pub fn sync_clips(window: &AppWindow, playlist: &Playlist) {
     for clip in playlist.clips() {
         vm.push(clip_to_data(clip));
     }
+    window.set_clip_count(vm.row_count() as i32);
     // Mirror into per-track models so the multi-lane Timeline can render
     // V2 above V1 without duplicating model bookkeeping in Slint.
     sync_per_track(window, playlist);

@@ -228,10 +228,10 @@ export component AppWindow inherits Window {
                         HorizontalLayout {
                             padding: Theme.spacing-lg;
                             PreviewPanel {
-                                has-selection: root.has-selection;
-                                selected-name: root.selected-name;
-                                selected-resolution: root.selected-resolution;
-                                selected-duration: root.selected-duration;
+                                has-selection: root.clips.length > 0;
+                                selected-name: root.has-selection ? root.selected-name : "Project Timeline";
+                                selected-resolution: root.has-selection ? root.selected-resolution : "Timeline";
+                                selected-duration: root.has-selection ? root.selected-duration : root.total-duration;
                                 playhead-text: root.playhead-text;
                                 frame: root.preview-frame;
                                 playing: root.playing;

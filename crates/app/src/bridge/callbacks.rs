@@ -25,12 +25,14 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         window.on_browse_clicked(move || on_browse(weak.clone(), tx.clone()));
     }
     {
+        let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let zoom = state.zoom.clone();
         let undo = state.undo.clone();
+        let tracks = state.tracks.clone();
         window.on_remove_clicked(move |id| {
-            on_remove(weak.clone(), pl.clone(), zoom.clone(), undo.clone(), id)
+            on_remove(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), zoom.clone(), undo.clone(), id)
         });
     }
     {
@@ -59,9 +61,10 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let pv = state.preview.clone();
+        let tracks = state.tracks.clone();
         window.on_clip_selected(move |id| {
             let Ok(uuid) = Uuid::parse_str(id.as_str()) else { return };
-            select_and_open(weak.clone(), tx.clone(), pl.clone(), pv.clone(), uuid, None);
+            select_and_open(weak.clone(), tx.clone(), pl.clone(), pv.clone(), &tracks, uuid, None);
         });
     }
     {
@@ -108,12 +111,14 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let pv = state.preview.clone();
         let zoom = state.zoom.clone();
         let undo = state.undo.clone();
+        let tracks = state.tracks.clone();
         window.on_trim_released(move |id, is_right, dx_px| {
             on_trim_released(
                 weak.clone(),
                 tx.clone(),
                 pl.clone(),
                 pv.clone(),
+                tracks.clone(),
                 zoom.clone(),
                 undo.clone(),
                 id,
@@ -129,25 +134,29 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let pv = state.preview.clone();
         let zoom = state.zoom.clone();
         let undo = state.undo.clone();
+        let tracks = state.tracks.clone();
         window.on_split(move || {
             on_split(
                 weak.clone(),
                 tx.clone(),
                 pl.clone(),
                 pv.clone(),
+                tracks.clone(),
                 zoom.clone(),
                 undo.clone(),
             )
         });
     }
     {
+        let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let pv = state.preview.clone();
         let zoom = state.zoom.clone();
         let undo = state.undo.clone();
+        let tracks = state.tracks.clone();
         window.on_ripple_delete(move || {
-            on_ripple_delete(weak.clone(), pl.clone(), pv.clone(), zoom.clone(), undo.clone())
+            on_ripple_delete(weak.clone(), tx.clone(), pl.clone(), pv.clone(), tracks.clone(), zoom.clone(), undo.clone())
         });
     }
     {
@@ -165,12 +174,14 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let pv = state.preview.clone();
         let zoom = state.zoom.clone();
         let undo = state.undo.clone();
+        let tracks = state.tracks.clone();
         window.on_set_in(move || {
             on_set_inout(
                 weak.clone(),
                 tx.clone(),
                 pl.clone(),
                 pv.clone(),
+                tracks.clone(),
                 zoom.clone(),
                 undo.clone(),
                 TrimSide::Left,
@@ -184,12 +195,14 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let pv = state.preview.clone();
         let zoom = state.zoom.clone();
         let undo = state.undo.clone();
+        let tracks = state.tracks.clone();
         window.on_set_out(move || {
             on_set_inout(
                 weak.clone(),
                 tx.clone(),
                 pl.clone(),
                 pv.clone(),
+                tracks.clone(),
                 zoom.clone(),
                 undo.clone(),
                 TrimSide::Right,
@@ -197,20 +210,24 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         });
     }
     {
+        let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let pv = state.preview.clone();
         let zoom = state.zoom.clone();
         let undo = state.undo.clone();
-        window.on_undo(move || on_undo(weak.clone(), pl.clone(), pv.clone(), zoom.clone(), undo.clone()));
+        let tracks = state.tracks.clone();
+        window.on_undo(move || on_undo(weak.clone(), tx.clone(), pl.clone(), pv.clone(), tracks.clone(), zoom.clone(), undo.clone()));
     }
     {
+        let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let pv = state.preview.clone();
         let zoom = state.zoom.clone();
         let undo = state.undo.clone();
-        window.on_redo(move || on_redo(weak.clone(), pl.clone(), pv.clone(), zoom.clone(), undo.clone()));
+        let tracks = state.tracks.clone();
+        window.on_redo(move || on_redo(weak.clone(), tx.clone(), pl.clone(), pv.clone(), tracks.clone(), zoom.clone(), undo.clone()));
     }
     {
         let weak = window.as_weak();
@@ -221,6 +238,7 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         window.on_save_project(move || on_save_project(weak.clone(), pl.clone(), proj.clone(), tracks.clone(), zoom.clone()));
     }
     {
+        let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let proj = state.project.clone();
@@ -231,6 +249,7 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         window.on_load_project(move || {
             on_load_project(
                 weak.clone(),
+                tx.clone(),
                 pl.clone(),
                 proj.clone(),
                 tracks.clone(),
@@ -259,45 +278,57 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         window.on_toggle_master_mute(move || on_toggle_master_mute(weak.clone(), tx.clone(), audio.clone()));
     }
     {
+        let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let zoom = state.zoom.clone();
         let undo = state.undo.clone();
+        let tracks = state.tracks.clone();
         window.on_move_to_track(move |id, t| {
-            on_move_to_track(weak.clone(), pl.clone(), zoom.clone(), undo.clone(), id, t as u8)
+            on_move_to_track(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), zoom.clone(), undo.clone(), id, t as u8)
         });
     }
     {
-        let weak = window.as_weak();
-        let tracks = state.tracks.clone();
-        window.on_toggle_track_mute(move |idx| on_toggle_track_mute(weak.clone(), tracks.clone(), idx));
-    }
-    {
-        let weak = window.as_weak();
-        let tracks = state.tracks.clone();
-        window.on_toggle_track_solo(move |idx| on_toggle_track_solo(weak.clone(), tracks.clone(), idx));
-    }
-    {
-        let weak = window.as_weak();
-        let tracks = state.tracks.clone();
-        window.on_toggle_track_lock(move |idx| on_toggle_track_lock(weak.clone(), tracks.clone(), idx));
-    }
-    {
+        let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        window.on_toggle_track_mute(move |idx| on_toggle_track_mute(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), idx));
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        window.on_toggle_track_solo(move |idx| on_toggle_track_solo(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), idx));
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        window.on_toggle_track_lock(move |idx| on_toggle_track_lock(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), idx));
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
         let zoom = state.zoom.clone();
         let undo = state.undo.clone();
         window.on_selected_clip_volume_changed(move |vol| {
-            on_selected_clip_volume_changed(weak.clone(), pl.clone(), zoom.clone(), undo.clone(), vol);
+            on_selected_clip_volume_changed(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), zoom.clone(), undo.clone(), vol);
         });
     }
     {
+        let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
         let zoom = state.zoom.clone();
         let undo = state.undo.clone();
         window.on_selected_clip_muted_changed(move |muted| {
-            on_selected_clip_muted_changed(weak.clone(), pl.clone(), zoom.clone(), undo.clone(), muted);
+            on_selected_clip_muted_changed(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), zoom.clone(), undo.clone(), muted);
         });
     }
     {
@@ -359,7 +390,9 @@ fn on_browse(weak: Weak<AppWindow>, cmd_tx: mpsc::Sender<Command>) {
 
 fn on_remove(
     weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
     zoom: SharedZoom,
     undo: SharedUndo,
     id: SharedString,
@@ -381,6 +414,7 @@ fn on_remove(
         timeline_view::refresh_ruler(&window, &pl, z);
         window.set_status_text(format!("{} clips in timeline", pl.len()).into());
     }
+    sync_preview(&playlist, &tracks, &cmd_tx);
 }
 
 fn on_drag_started(weak: Weak<AppWindow>, idx: i32) {
@@ -445,6 +479,29 @@ fn on_drag_released(
     timeline_view::refresh_ruler(&window, &pl, z);
 }
 
+fn sync_preview(
+    playlist: &SharedPlaylist,
+    tracks: &super::SharedTracks,
+    cmd_tx: &mpsc::Sender<Command>,
+) {
+    let pl = playlist.lock().expect("playlist mutex poisoned");
+    let ts = tracks.lock().expect("tracks mutex poisoned");
+    let mut project = video_merger_core::domain::Project::from_playlist(&pl);
+    for track in &mut project.tracks {
+        let state_idx = match track.name.as_str() {
+            "V1" => 0,
+            "V2" => 1,
+            "A1" => 2,
+            "A2" => 3,
+            _ => continue,
+        };
+        track.muted = ts.muted[state_idx];
+        track.solo = ts.soloed[state_idx];
+        track.locked = ts.locked[state_idx];
+    }
+    let _ = cmd_tx.try_send(Command::OpenPreview { project });
+}
+
 /// Select `clip_id`, push its metadata to the UI, and open a preview session.
 /// `initial_seek_us` is stored as a pending seek so the first
 /// `PreviewOpened` event triggers a `SeekPreview` automatically.
@@ -453,10 +510,11 @@ fn select_and_open(
     cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
     preview: SharedPreview,
+    tracks: &super::SharedTracks,
     clip_id: Uuid,
     initial_seek_us: Option<i64>,
 ) {
-    let (path, name, codec, resolution, duration, fps, trim_in_us, trim_out_us, volume, muted) = {
+    let (_path, name, codec, resolution, duration, fps, _trim_in_us, _trim_out_us, volume, muted) = {
         let pl = playlist.lock().expect("playlist mutex poisoned");
         let Some(clip) = pl.clips().iter().find(|c| c.id == clip_id) else {
             return;
@@ -489,13 +547,19 @@ fn select_and_open(
         )
     };
 
+    let offset_us = {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        timeline_view::selected_clip_window(&pl, Some(clip_id))
+            .map(|(off, _)| off)
+            .unwrap_or(0)
+    };
+    let target_seek_us = offset_us + initial_seek_us.unwrap_or(0);
+
     {
         let mut pv = preview.lock().expect("preview mutex poisoned");
         pv.clip_id = Some(clip_id);
-        pv.playhead_us = 0;
-        pv.duration_us = 0;
+        pv.playhead_us = target_seek_us;
         pv.playing = false;
-        pv.pending_seek_us = initial_seek_us;
         pv.frame_history.clear();
     }
 
@@ -509,18 +573,12 @@ fn select_and_open(
         window.set_selected_fps(SharedString::from(fps));
         window.set_selected_volume(volume);
         window.set_selected_muted(muted);
-        window.set_playhead_text(SharedString::from("0:00"));
         window.set_playing(false);
     }
 
-    if let Err(err) = cmd_tx.try_send(Command::OpenPreview {
-        clip_id,
-        path,
-        trim_in_us,
-        trim_out_us,
-    }) {
-        tracing::warn!(error = %err, "failed to enqueue OpenPreview");
-    }
+    sync_preview(&playlist, tracks, &cmd_tx);
+
+    let _ = cmd_tx.try_send(Command::SeekPreview { pts_us: target_seek_us });
 }
 
 fn on_play_toggle(
@@ -556,8 +614,7 @@ fn on_play_toggle(
     }
 }
 
-/// Map a click on the ruler to "select that clip and seek inside it".
-/// Same-clip seek → SeekPreview; cross-clip seek → select + pending seek.
+/// Map a click on the ruler to "seek timeline playhead".
 fn on_seek_fraction(
     weak: Weak<AppWindow>,
     cmd_tx: mpsc::Sender<Command>,
@@ -565,21 +622,23 @@ fn on_seek_fraction(
     preview: SharedPreview,
     fraction: f32,
 ) {
-    let target = {
+    let total_us = {
         let pl = playlist.lock().expect("playlist mutex poisoned");
-        timeline_view::fraction_to_clip_local(&pl, fraction)
+        timeline_view::total_duration_us(&pl)
     };
-    let Some((target_clip, local_us)) = target else {
-        return;
-    };
-
-    let current = preview.lock().expect("preview mutex poisoned").clip_id;
-    if current == Some(target_clip) {
-        if let Err(err) = cmd_tx.try_send(Command::SeekPreview { pts_us: local_us }) {
-            tracing::warn!(error = %err, "seek failed");
-        }
-    } else {
-        select_and_open(weak, cmd_tx, playlist, preview, target_clip, Some(local_us));
+    let pts_us = (fraction as f64 * total_us as f64) as i64;
+    {
+        let mut pv = preview.lock().expect("preview mutex poisoned");
+        pv.playhead_us = pts_us;
+    }
+    if let Err(err) = cmd_tx.try_send(Command::SeekPreview { pts_us }) {
+        tracing::warn!(error = %err, "seek failed");
+    }
+    if let Some(window) = weak.upgrade() {
+        window.set_playhead_fraction(fraction);
+        window.set_playhead_text(SharedString::from(
+            crate::view_model::timeline_vm::format_us(pts_us),
+        ));
     }
 }
 
@@ -621,6 +680,7 @@ fn on_trim_released(
     cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
     preview: SharedPreview,
+    tracks: super::SharedTracks,
     zoom: SharedZoom,
     undo: SharedUndo,
     id: SharedString,
@@ -665,7 +725,7 @@ fn on_trim_released(
         timeline_view::refresh_ruler(&window, &pl, zoom_val);
     }
     // Re-open preview with the new bounds so playback respects the trim.
-    select_and_open(weak, cmd_tx, playlist, preview, uuid, None);
+    select_and_open(weak, cmd_tx, playlist, preview, &tracks, uuid, None);
 }
 
 fn on_split(
@@ -673,6 +733,7 @@ fn on_split(
     cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
     preview: SharedPreview,
+    tracks: super::SharedTracks,
     zoom: SharedZoom,
     undo: SharedUndo,
 ) {
@@ -699,13 +760,15 @@ fn on_split(
         timeline_view::refresh_ruler(&window, &pl, z);
     }
     // Left half retains the original id; re-select it to reset preview bounds.
-    select_and_open(weak, cmd_tx, playlist, preview, clip_id, None);
+    select_and_open(weak, cmd_tx, playlist, preview, &tracks, clip_id, None);
 }
 
 fn on_ripple_delete(
     weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
     preview: SharedPreview,
+    tracks: super::SharedTracks,
     zoom: SharedZoom,
     undo: SharedUndo,
 ) {
@@ -741,6 +804,7 @@ fn on_ripple_delete(
             pl.len()
         )));
     }
+    sync_preview(&playlist, &tracks, &cmd_tx);
 }
 
 fn on_step_frame(
@@ -777,6 +841,7 @@ fn on_set_inout(
     cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
     preview: SharedPreview,
+    tracks: super::SharedTracks,
     zoom: SharedZoom,
     undo: SharedUndo,
     side: TrimSide,
@@ -807,7 +872,7 @@ fn on_set_inout(
         models::sync_clips(&window, &pl);
         timeline_view::refresh_ruler(&window, &pl, z);
     }
-    select_and_open(weak, cmd_tx, playlist, preview, clip_id, None);
+    select_and_open(weak, cmd_tx, playlist, preview, &tracks, clip_id, None);
 }
 
 /// Push the current playlist onto the undo stack before a mutation.
@@ -820,7 +885,9 @@ fn checkpoint(undo: &SharedUndo, playlist: &Playlist) {
 
 fn restore_playlist(
     weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
     preview: SharedPreview,
     zoom: SharedZoom,
     new_pl: Playlist,
@@ -849,12 +916,15 @@ fn restore_playlist(
         window.set_playhead_fraction(0.0);
         window.set_playhead_text(SharedString::from("0:00"));
     }
+    sync_preview(&playlist, &tracks, &cmd_tx);
 }
 
 fn on_undo(
     weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
     preview: SharedPreview,
+    tracks: super::SharedTracks,
     zoom: SharedZoom,
     undo: SharedUndo,
 ) {
@@ -864,13 +934,15 @@ fn on_undo(
         u.undo(&pl)
     };
     let Some(prev) = prev else { return };
-    restore_playlist(weak, playlist, preview, zoom, prev);
+    restore_playlist(weak, cmd_tx, playlist, tracks, preview, zoom, prev);
 }
 
 fn on_redo(
     weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
     preview: SharedPreview,
+    tracks: super::SharedTracks,
     zoom: SharedZoom,
     undo: SharedUndo,
 ) {
@@ -880,7 +952,7 @@ fn on_redo(
         u.redo(&pl)
     };
     let Some(next) = next else { return };
-    restore_playlist(weak, playlist, preview, zoom, next);
+    restore_playlist(weak, cmd_tx, playlist, tracks, preview, zoom, next);
 }
 
 fn on_save_project(
@@ -948,6 +1020,7 @@ fn on_save_project(
 
 fn on_load_project(
     weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
     project_state: super::SharedProject,
     tracks_state: super::SharedTracks,
@@ -1035,7 +1108,7 @@ fn on_load_project(
     }
 
     let loaded_playlist = project.playlist_compat();
-    restore_playlist(weak.clone(), playlist, preview, zoom, loaded_playlist);
+    restore_playlist(weak.clone(), cmd_tx, playlist, tracks_state, preview, zoom, loaded_playlist);
     if let Some(window) = weak.upgrade() {
         window.set_status_text(SharedString::from(format!(
             "Loaded: {}",
@@ -1066,7 +1139,9 @@ fn on_toggle_master_mute(
 
 fn on_move_to_track(
     weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
     zoom: SharedZoom,
     undo: SharedUndo,
     id: SharedString,
@@ -1094,10 +1169,13 @@ fn on_move_to_track(
         models::sync_clips(&window, &pl);
         timeline_view::refresh_ruler(&window, &pl, z);
     }
+    sync_preview(&playlist, &tracks, &cmd_tx);
 }
 
 fn on_toggle_track_mute(
     weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
     tracks: super::SharedTracks,
     idx: i32,
 ) {
@@ -1119,10 +1197,13 @@ fn on_toggle_track_mute(
             _ => {}
         }
     }
+    sync_preview(&playlist, &tracks, &cmd_tx);
 }
 
 fn on_toggle_track_solo(
     weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
     tracks: super::SharedTracks,
     idx: i32,
 ) {
@@ -1144,10 +1225,13 @@ fn on_toggle_track_solo(
             _ => {}
         }
     }
+    sync_preview(&playlist, &tracks, &cmd_tx);
 }
 
 fn on_toggle_track_lock(
     weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
     tracks: super::SharedTracks,
     idx: i32,
 ) {
@@ -1169,6 +1253,7 @@ fn on_toggle_track_lock(
             _ => {}
         }
     }
+    sync_preview(&playlist, &tracks, &cmd_tx);
 }
 
 fn on_reveal_in_finder(playlist: SharedPlaylist, id: SharedString) {
@@ -1308,7 +1393,9 @@ fn pick_output_path(starting_dir: Option<&std::path::Path>) -> Option<PathBuf> {
 
 fn on_selected_clip_volume_changed(
     weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
     zoom: SharedZoom,
     undo: SharedUndo,
     volume: f32,
@@ -1330,12 +1417,15 @@ fn on_selected_clip_volume_changed(
             let z = *zoom.lock().expect("zoom mutex poisoned");
             timeline_view::refresh_ruler(&window, &pl, z);
         }
+        sync_preview(&playlist, &tracks, &cmd_tx);
     }
 }
 
 fn on_selected_clip_muted_changed(
     weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
     zoom: SharedZoom,
     undo: SharedUndo,
     muted: bool,
@@ -1357,6 +1447,7 @@ fn on_selected_clip_muted_changed(
             let z = *zoom.lock().expect("zoom mutex poisoned");
             timeline_view::refresh_ruler(&window, &pl, z);
         }
+        sync_preview(&playlist, &tracks, &cmd_tx);
     }
 }
 

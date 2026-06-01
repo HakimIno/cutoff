@@ -144,6 +144,7 @@ pub fn drop_target(
 }
 
 /// Map a fraction of the entire timeline (0..1) back to a clip + local pts.
+#[allow(dead_code)]
 pub fn fraction_to_clip_local(
     playlist: &Playlist,
     fraction: f32,
