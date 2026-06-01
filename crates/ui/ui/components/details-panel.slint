@@ -227,9 +227,17 @@ export component DetailsPanel inherits Rectangle {
 
     in property <float> selected-volume: 1.0;
     in property <bool> selected-muted: false;
+    in property <float> selected-opacity: 1.0;
+    in property <float> selected-scale: 1.0;
+    in property <int> selected-position-x: 0;
+    in property <int> selected-position-y: 0;
 
     callback volume-changed(float);
     callback muted-changed(bool);
+    callback opacity-changed(float);
+    callback scale-changed(float);
+    callback position-x-changed(int);
+    callback position-y-changed(int);
 
     width: 260px;
     background: Palette.surface;
@@ -292,15 +300,17 @@ export component DetailsPanel inherits Rectangle {
                     padding-right: Theme.spacing-sm;
                     StudioSlider {
                         label: "Opacity";
-                        value: 1.0;
+                        value: root.selected-opacity;
                         max-val: 1.0;
                         unit: "%";
+                        changed(o) => { root.opacity-changed(o); }
                     }
                     StudioSlider {
                         label: "Scale";
-                        value: 1.0;
+                        value: root.selected-scale;
                         max-val: 2.0;
                         unit: "%";
+                        changed(s) => { root.scale-changed(s); }
                     }
                     HorizontalLayout {
                         spacing: Theme.spacing-sm;
@@ -318,11 +328,22 @@ export component DetailsPanel inherits Rectangle {
                             height: 24px;
                             horizontal-stretch: 1;
                             Text {
-                                text: "X: 0 px";
-                                color: Palette.text-dim;
+                                text: "X: " + root.selected-position-x + " px";
+                                color: ta-x.pressed ? Palette.accent-2 : (ta-x.has-hover ? Palette.text : Palette.text-muted);
                                 font-size: Theme.font-xs;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
+                            }
+                            ta-x := TouchArea {
+                                mouse-cursor: ew-resize;
+                                moved => {
+                                    if (self.pressed) {
+                                        let delta = (self.mouse-x - self.pressed-x) / 1px;
+                                        if (abs(delta) >= 1.0) {
+                                            root.position-x-changed(root.selected-position-x + Math.round(delta));
+                                        }
+                                    }
+                                }
                             }
                         }
                         Rectangle {
@@ -331,11 +352,23 @@ export component DetailsPanel inherits Rectangle {
                             height: 24px;
                             horizontal-stretch: 1;
                             Text {
-                                text: "Y: 0 px";
-                                color: Palette.text-dim;
+                                text: "Y: " + root.selected-position-y + " px";
+                                color: ta-y.pressed ? Palette.accent-2 : (ta-y.has-hover ? Palette.text : Palette.text-muted);
                                 font-size: Theme.font-xs;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
+                            }
+                            ta-y := TouchArea {
+                                mouse-cursor: ew-resize;
+                                moved => {
+                                    if (self.pressed) {
+                                        let delta = (self.mouse-x - self.pressed-x) / 1px;
+                                        if (abs(delta) >= 1.0) {
+                                            // dragging horizontally adjusts vertical position (Resolve style)
+                                            root.position-y-changed(root.selected-position-y - Math.round(delta));
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

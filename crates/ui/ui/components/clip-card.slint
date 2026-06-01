@@ -43,9 +43,9 @@ export component ClipBlock inherits Rectangle {
 
     callback clip-clicked(string);
     callback remove-clicked(string);
-    callback drag-started(int);
-    callback drag-moved(int, length);
-    callback drag-released(int, length);
+    callback drag-started(string);
+    callback drag-moved(string, length);
+    callback drag-released(string, length);
     callback trim-released(string, bool, length);  // (id, is_right_handle, delta_px)
     callback request-split(string);
     callback reveal-in-finder(string);
@@ -65,149 +65,37 @@ export component ClipBlock inherits Rectangle {
     animate border-color { duration: 120ms; }
     animate opacity { duration: 120ms; }
 
-    // Glow accent stripe for selected
-    if root.selected : Rectangle {
-        x: 0; y: 0;
-        width: 3px; height: 100%;
-        background: Palette.accent;
-        border-radius: 1px;
-    }
+    // ── Layer 0 (bottom): drag/click TouchArea covers the whole card.
+    // Interactive children declared after this win the z-order battle.
+    drag-area := TouchArea {
+        mouse-cursor: dragging ? grabbing : grab;
+        property <bool> dragging: false;
+        property <length> drag-threshold: 4px;
 
-    // Filmstrip background (thumbnails laid across the card)
-    Rectangle {
-        x: 0;
-        y: 20px;
-        width: parent.width;
-        height: 28px;
-        clip: true;
-        background: #000000;
-
-        HorizontalLayout {
-            spacing: 0px;
-            alignment: start;
-            for thumb[i] in root.data.thumbnails: Image {
-                source: thumb;
-                width: parent.width / max(root.data.thumbnails.length, 1);
-                height: 28px;
-                image-fit: cover;
+        clicked => {
+            if (!self.dragging) {
+                root.clip-clicked(root.data.id);
             }
         }
-    }
-
-    // Waveform strip beneath the filmstrip.
-    Rectangle {
-        x: 0;
-        y: 48px;
-        width: parent.width;
-        height: 12px;
-        background: Palette.surface;
-        opacity: root.data.muted ? 0.4 : 1.0;
-        WaveformStrip {
-            x: 0;
-            y: 0;
-            width: parent.width;
-            height: parent.height;
-            peaks: root.data.waveform-peaks;
-        }
-    }
-
-    VerticalLayout {
-        padding-left: Theme.spacing-sm;
-        padding-right: Theme.spacing-sm;
-        padding-top: 4px;
-        padding-bottom: 4px;
-        spacing: 0px;
-        alignment: space-between;
-
-        HorizontalLayout {
-            spacing: Theme.spacing-sm;
-            alignment: start;
-            Rectangle {
-                width: 18px; height: 16px;
-                border-radius: Theme.radius-sm;
-                background: root.selected ? Palette.accent : Palette.surface-3;
-                Text {
-                    text: root.index + 1;
-                    color: Palette.text;
-                    font-size: Theme.font-xs;
-                    font-weight: 700;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
+        moved => {
+            if (self.pressed && !self.dragging
+                && (abs(self.mouse-x - self.pressed-x) > self.drag-threshold)) {
+                self.dragging = true;
+                root.drag-started(root.data.id);
             }
-            Text {
-                text: root.data.name;
-                color: Palette.text;
-                font-size: Theme.font-xs;
-                font-weight: 600;
-                vertical-alignment: center;
-                overflow: elide;
-                horizontal-stretch: 1;
+            if (self.dragging) {
+                root.drag-moved(root.data.id, self.mouse-x - self.pressed-x);
             }
         }
-
-        Rectangle { vertical-stretch: 1; }
-
-        HorizontalLayout {
-            spacing: Theme.spacing-xs;
-            alignment: space-between;
-
-            Text {
-                text: root.data.duration;
-                color: Palette.text-muted;
-                font-size: Theme.font-xs;
-                font-weight: 600;
-                vertical-alignment: center;
-            }
-
-            IconAction {
-                dim: !drag-area.has-hover && !root.selected;
-                hover-color: Palette.danger;
-                clicked => { root.remove-clicked(root.data.id); }
-            }
-        }
-    }
-
-    // Trim handle: left edge
-    left-trim := TouchArea {
-        x: 0;
-        y: 0;
-        width: 6px;
-        height: parent.height;
-        mouse-cursor: ew-resize;
         pointer-event(e) => {
-            if (e.kind == PointerEventKind.up && self.has-hover) {
-                root.trim-released(root.data.id, false, self.mouse-x - self.pressed-x);
+            if (e.kind == PointerEventKind.up && self.dragging) {
+                root.drag-released(root.data.id, self.mouse-x - self.pressed-x);
+                self.dragging = false;
             }
         }
     }
-    // Visual cue on hover
-    if left-trim.has-hover || left-trim.pressed : Rectangle {
-        x: 0; y: 0;
-        width: 1px; height: parent.height;
-        background: white;
-    }
 
-    // Trim handle: right edge
-    right-trim := TouchArea {
-        x: parent.width - 6px;
-        y: 0;
-        width: 6px;
-        height: parent.height;
-        mouse-cursor: ew-resize;
-        pointer-event(e) => {
-            if (e.kind == PointerEventKind.up && self.has-hover) {
-                root.trim-released(root.data.id, true, self.mouse-x - self.pressed-x);
-            }
-        }
-    }
-    if right-trim.has-hover || right-trim.pressed : Rectangle {
-        x: parent.width - 1px; y: 0;
-        width: 1px; height: parent.height;
-        background: white;
-    }
-
-    // Right-click context menu (Split / Move track / Delete / Reveal in Finder).
+    // ── Layer 1: right-click context menu (whole-card right-click target).
     ContextMenuArea {
         Menu {
             MenuItem {
@@ -242,35 +130,136 @@ export component ClipBlock inherits Rectangle {
         }
     }
 
-    // Drag + click handler covers the whole card (IconAction sits on top of it
-    // and intercepts × clicks first because it's declared later in DOM order).
-    drag-area := TouchArea {
-        mouse-cursor: dragging ? grabbing : grab;
-        property <bool> dragging: false;
-        property <length> drag-threshold: 4px;
+    // ── Layer 2: visual content (selection stripe, filmstrip, waveform, labels).
+    // Plain Rectangles/Texts don't capture pointer events, so the drag-area
+    // underneath still receives clicks on empty card body.
+    if root.selected : Rectangle {
+        x: 0; y: 0;
+        width: 3px; height: 100%;
+        background: Palette.accent;
+        border-radius: 1px;
+    }
 
-        clicked => {
-            if (!self.dragging) {
-                root.clip-clicked(root.data.id);
+    Rectangle {
+        x: 0;
+        y: 20px;
+        width: parent.width;
+        height: 28px;
+        clip: true;
+        background: #000000;
+
+        HorizontalLayout {
+            spacing: 0px;
+            alignment: start;
+            for thumb[i] in root.data.thumbnails: Image {
+                source: thumb;
+                width: parent.width / max(root.data.thumbnails.length, 1);
+                height: 28px;
+                image-fit: cover;
             }
         }
-        moved => {
-            // Slint TouchArea moved fires while pressed and pointer moves.
-            // Start drag once we've crossed the threshold.
-            if (self.pressed && !self.dragging
-                && (abs(self.mouse-x - self.pressed-x) > self.drag-threshold)) {
-                self.dragging = true;
-                root.drag-started(root.index);
-            }
-            if (self.dragging) {
-                root.drag-moved(root.index, self.mouse-x - self.pressed-x);
+    }
+
+    Rectangle {
+        x: 0;
+        y: 48px;
+        width: parent.width;
+        height: 12px;
+        background: Palette.surface;
+        opacity: root.data.muted ? 0.4 : 1.0;
+        WaveformStrip {
+            x: 0;
+            y: 0;
+            width: parent.width;
+            height: parent.height;
+            peaks: root.data.waveform-peaks;
+        }
+    }
+
+    HorizontalLayout {
+        x: Theme.spacing-sm;
+        y: 4px;
+        width: parent.width - 2 * Theme.spacing-sm;
+        spacing: Theme.spacing-sm;
+        alignment: start;
+        Rectangle {
+            width: 18px; height: 16px;
+            border-radius: Theme.radius-sm;
+            background: root.selected ? Palette.accent : Palette.surface-3;
+            Text {
+                text: root.index + 1;
+                color: Palette.text;
+                font-size: Theme.font-xs;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
             }
         }
+        Text {
+            text: root.data.name;
+            color: Palette.text;
+            font-size: Theme.font-xs;
+            font-weight: 600;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+    }
+
+    Text {
+        x: Theme.spacing-sm;
+        y: parent.height - self.height - 4px;
+        text: root.data.duration;
+        color: Palette.text-muted;
+        font-size: Theme.font-xs;
+        font-weight: 600;
+    }
+
+    // ── Layer 3 (TOP): interactive controls. These TouchAreas are declared
+    // *after* drag-area so they take pointer priority within their bounds.
+
+    left-trim := TouchArea {
+        x: 0;
+        y: 0;
+        width: 6px;
+        height: parent.height;
+        mouse-cursor: ew-resize;
         pointer-event(e) => {
-            if (e.kind == PointerEventKind.up && self.dragging) {
-                root.drag-released(root.index, self.mouse-x - self.pressed-x);
-                self.dragging = false;
+            if (e.kind == PointerEventKind.up && self.has-hover) {
+                root.trim-released(root.data.id, false, self.mouse-x - self.pressed-x);
             }
         }
+    }
+    if left-trim.has-hover || left-trim.pressed : Rectangle {
+        x: 0; y: 0;
+        width: 1px; height: parent.height;
+        background: white;
+    }
+
+    right-trim := TouchArea {
+        x: parent.width - 6px;
+        y: 0;
+        width: 6px;
+        height: parent.height;
+        mouse-cursor: ew-resize;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.up && self.has-hover) {
+                root.trim-released(root.data.id, true, self.mouse-x - self.pressed-x);
+            }
+        }
+    }
+    if right-trim.has-hover || right-trim.pressed : Rectangle {
+        x: parent.width - 1px; y: 0;
+        width: 1px; height: parent.height;
+        background: white;
+    }
+
+    // Close (×) button absolutely positioned bottom-right, ON TOP of drag-area.
+    IconAction {
+        x: parent.width - self.width - Theme.spacing-xs;
+        y: parent.height - self.height - 4px;
+        dim: !drag-area.has-hover && !root.selected;
+        hover-color: Palette.danger;
+        clicked => { root.remove-clicked(root.data.id); }
     }
 }

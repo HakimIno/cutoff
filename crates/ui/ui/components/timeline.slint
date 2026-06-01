@@ -16,13 +16,13 @@ component TrackLane inherits Rectangle {
     in property <[ClipData]> clips;
     in property <string> selected-id;
     in property <length> px-per-sec: 6px;
-    in property <int> drag-from-index: -1;
+    in property <string> drag-from-id;
 
     callback clip-clicked(string);
     callback remove-clicked(string);
-    callback drag-started(int);
-    callback drag-moved(int, length);
-    callback drag-released(int, length);
+    callback drag-started(string);
+    callback drag-moved(string, length);
+    callback drag-released(string, length);
     callback trim-released(string, bool, length);
     callback request-split(string);
     callback reveal-in-finder(string);
@@ -40,12 +40,12 @@ component TrackLane inherits Rectangle {
             index: idx;
             px-per-sec: root.px-per-sec;
             selected: clip.id == root.selected-id;
-            drag-ghost: root.drag-from-index == idx;
+            drag-ghost: root.drag-from-id != "" && clip.id == root.drag-from-id;
             clip-clicked(id)      => { root.clip-clicked(id); }
             remove-clicked(id)    => { root.remove-clicked(id); }
-            drag-started(i)       => { root.drag-started(i); }
-            drag-moved(i, dx)     => { root.drag-moved(i, dx); }
-            drag-released(i, dx)  => { root.drag-released(i, dx); }
+            drag-started(id)      => { root.drag-started(id); }
+            drag-moved(id, dx)    => { root.drag-moved(id, dx); }
+            drag-released(id, dx) => { root.drag-released(id, dx); }
             trim-released(id, right, dx) => { root.trim-released(id, right, dx); }
             request-split(id)     => { root.request-split(id); }
             reveal-in-finder(id)  => { root.reveal-in-finder(id); }
@@ -65,7 +65,7 @@ export component Timeline inherits Rectangle {
     in property <length> total-width: 0px;
     in property <float> playhead-fraction: 0.0;
 
-    in property <int> drag-from-index: -1;
+    in property <string> drag-from-id;
     in property <int> drop-target-index: -1;
     in property <length> drop-indicator-x: 0px;
 
@@ -87,9 +87,9 @@ export component Timeline inherits Rectangle {
     callback clip-clicked(string);
     callback remove-clicked(string);
     callback seek-fraction(float);
-    callback drag-started(int);
-    callback drag-moved(int, length);
-    callback drag-released(int, length);
+    callback drag-started(string);
+    callback drag-moved(string, length);
+    callback drag-released(string, length);
     callback trim-released(string, bool, length);
     callback request-split(string);
     callback reveal-in-finder(string);
@@ -280,12 +280,12 @@ export component Timeline inherits Rectangle {
                                 clips: root.clips-v2;
                                 selected-id: root.selected-id;
                                 px-per-sec: root.px-per-sec;
-                                drag-from-index: root.drag-from-index;
+                                drag-from-id: root.drag-from-id;
                                 clip-clicked(id)      => { root.clip-clicked(id); }
                                 remove-clicked(id)    => { root.remove-clicked(id); }
-                                drag-started(i)       => { root.drag-started(i); }
-                                drag-moved(i, dx)     => { root.drag-moved(i, dx); }
-                                drag-released(i, dx)  => { root.drag-released(i, dx); }
+                                drag-started(id)      => { root.drag-started(id); }
+                                drag-moved(id, dx)    => { root.drag-moved(id, dx); }
+                                drag-released(id, dx) => { root.drag-released(id, dx); }
                                 trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
                                 request-split(id)     => { root.request-split(id); }
                                 reveal-in-finder(id)  => { root.reveal-in-finder(id); }
@@ -304,12 +304,12 @@ export component Timeline inherits Rectangle {
                                 clips: root.clips-v1;
                                 selected-id: root.selected-id;
                                 px-per-sec: root.px-per-sec;
-                                drag-from-index: root.drag-from-index;
+                                drag-from-id: root.drag-from-id;
                                 clip-clicked(id)      => { root.clip-clicked(id); }
                                 remove-clicked(id)    => { root.remove-clicked(id); }
-                                drag-started(i)       => { root.drag-started(i); }
-                                drag-moved(i, dx)     => { root.drag-moved(i, dx); }
-                                drag-released(i, dx)  => { root.drag-released(i, dx); }
+                                drag-started(id)      => { root.drag-started(id); }
+                                drag-moved(id, dx)    => { root.drag-moved(id, dx); }
+                                drag-released(id, dx) => { root.drag-released(id, dx); }
                                 trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
                                 request-split(id)     => { root.request-split(id); }
                                 reveal-in-finder(id)  => { root.reveal-in-finder(id); }
@@ -328,12 +328,12 @@ export component Timeline inherits Rectangle {
                                 clips: root.clips-a1;
                                 selected-id: root.selected-id;
                                 px-per-sec: root.px-per-sec;
-                                drag-from-index: root.drag-from-index;
+                                drag-from-id: root.drag-from-id;
                                 clip-clicked(id)      => { root.clip-clicked(id); }
                                 remove-clicked(id)    => { root.remove-clicked(id); }
-                                drag-started(i)       => { root.drag-started(i); }
-                                drag-moved(i, dx)     => { root.drag-moved(i, dx); }
-                                drag-released(i, dx)  => { root.drag-released(i, dx); }
+                                drag-started(id)      => { root.drag-started(id); }
+                                drag-moved(id, dx)    => { root.drag-moved(id, dx); }
+                                drag-released(id, dx) => { root.drag-released(id, dx); }
                                 trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
                                 request-split(id)     => { root.request-split(id); }
                                 reveal-in-finder(id)  => { root.reveal-in-finder(id); }
@@ -352,12 +352,12 @@ export component Timeline inherits Rectangle {
                                 clips: root.clips-a2;
                                 selected-id: root.selected-id;
                                 px-per-sec: root.px-per-sec;
-                                drag-from-index: root.drag-from-index;
+                                drag-from-id: root.drag-from-id;
                                 clip-clicked(id)      => { root.clip-clicked(id); }
                                 remove-clicked(id)    => { root.remove-clicked(id); }
-                                drag-started(i)       => { root.drag-started(i); }
-                                drag-moved(i, dx)     => { root.drag-moved(i, dx); }
-                                drag-released(i, dx)  => { root.drag-released(i, dx); }
+                                drag-started(id)      => { root.drag-started(id); }
+                                drag-moved(id, dx)    => { root.drag-moved(id, dx); }
+                                drag-released(id, dx) => { root.drag-released(id, dx); }
                                 trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
                                 request-split(id)     => { root.request-split(id); }
                                 reveal-in-finder(id)  => { root.reveal-in-finder(id); }

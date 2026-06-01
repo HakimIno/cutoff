@@ -40,6 +40,14 @@ pub struct RenderSegment {
     pub track_idx: usize,
     /// Whether this track is muted.
     pub muted: bool,
+    /// Opacity (0.0..=1.0)
+    pub opacity: f32,
+    /// Scale (0.0..=2.0)
+    pub scale: f32,
+    /// X position offset (pixels)
+    pub position_x: i32,
+    /// Y position offset (pixels)
+    pub position_y: i32,
 }
 
 /// Complete render plan for multi-track export.
@@ -101,6 +109,10 @@ pub fn build_render_plan(project: &Project) -> RenderPlan {
                 trim_out_us: tc.clip.trim_out_us(),
                 track_idx,
                 muted: track.muted,
+                opacity: tc.clip.opacity,
+                scale: tc.clip.scale,
+                position_x: tc.clip.position_x,
+                position_y: tc.clip.position_y,
             };
 
             match track.kind {

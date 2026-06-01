@@ -37,9 +37,29 @@ pub struct Clip {
     /// load cleanly without migration logic.
     #[serde(default)]
     pub video_track: u8,
+    /// Opacity (0.0 to 1.0)
+    #[serde(default = "default_opacity")]
+    pub opacity: f32,
+    /// Scale (0.0 to 2.0)
+    #[serde(default = "default_scale")]
+    pub scale: f32,
+    /// X Position offset (pixels)
+    #[serde(default)]
+    pub position_x: i32,
+    /// Y Position offset (pixels)
+    #[serde(default)]
+    pub position_y: i32,
 }
 
 fn default_volume() -> f32 {
+    1.0
+}
+
+fn default_opacity() -> f32 {
+    1.0
+}
+
+fn default_scale() -> f32 {
     1.0
 }
 
@@ -57,6 +77,10 @@ impl Clip {
             muted: false,
             waveform_path: None,
             video_track: 0,
+            opacity: 1.0,
+            scale: 1.0,
+            position_x: 0,
+            position_y: 0,
         }
     }
 

@@ -299,19 +299,32 @@ fn build_multitrack_filter(
         let enable_start = seg.start_us as f64 / 1_000_000.0;
         let enable_end = seg.end_us as f64 / 1_000_000.0;
 
-        // Normalize video.
+        let scale = seg.scale;
+        let opacity = seg.opacity;
+        let mut overlay_w = (w as f32 * scale).round() as i32;
+        let mut overlay_h = (h as f32 * scale).round() as i32;
+        // Keep dimensions even to prevent ffmpeg chroma errors
+        if overlay_w % 2 != 0 { overlay_w += 1; }
+        if overlay_h % 2 != 0 { overlay_h += 1; }
+        let overlay_w = overlay_w.max(2);
+        let overlay_h = overlay_h.max(2);
+
+        let overlay_x = seg.position_x + (w as i32 - overlay_w) / 2;
+        let overlay_y = seg.position_y + (h as i32 - overlay_h) / 2;
+
+        // Normalize video, scale and set opacity
         let _ = write!(
             filter,
-            "[{i}:v]scale={w}:{h}:force_original_aspect_ratio=decrease,\
-             pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps_str},\
-             format=yuva420p,setpts=PTS+{delay_secs}/TB[ov{seg_i}];"
+            "[{i}:v]scale={overlay_w}:{overlay_h}:force_original_aspect_ratio=decrease,\
+             pad={overlay_w}:{overlay_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps_str},\
+             format=yuva420p,colorchannelmixer=aa={opacity:.3},setpts=PTS+{delay_secs}/TB[ov{seg_i}];"
         );
 
         // Overlay onto accumulated canvas.
         let out_label = format!("cv{seg_i}");
         let _ = write!(
             filter,
-            "[{last_label}][ov{seg_i}]overlay=0:0:enable='between(t,{enable_start:.6},{enable_end:.6})'[{out_label}];"
+            "[{last_label}][ov{seg_i}]overlay={overlay_x}:{overlay_y}:enable='between(t,{enable_start:.6},{enable_end:.6})'[{out_label}];"
         );
         last_label = out_label;
     }

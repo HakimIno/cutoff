@@ -289,26 +289,55 @@ fn resize_rgba(src: &[u8], src_w: usize, src_h: usize, dest: &mut [u8], dest_w: 
     }
 }
 
-fn composite_rgba(base: &mut [u8], overlay: &[u8]) {
-    assert_eq!(base.len(), overlay.len());
-    for i in (0..base.len()).step_by(4) {
-        let a_overlay = overlay[i + 3];
-        if a_overlay == 0 {
+fn composite_rgba_transformed(
+    base: &mut [u8],
+    base_w: usize,
+    base_h: usize,
+    overlay: &[u8],
+    overlay_w: usize,
+    overlay_h: usize,
+    offset_x: i32,
+    offset_y: i32,
+    opacity: f32,
+) {
+    if opacity <= 0.0 {
+        return;
+    }
+    
+    for dy in 0..overlay_h {
+        let dest_y = offset_y + dy as i32;
+        if dest_y < 0 || dest_y >= base_h as i32 {
             continue;
-        } else if a_overlay == 255 {
-            base[i] = overlay[i];
-            base[i + 1] = overlay[i + 1];
-            base[i + 2] = overlay[i + 2];
-            base[i + 3] = overlay[i + 3];
-        } else {
-            let alpha = a_overlay as f32 / 255.0;
-            let inv_alpha = 1.0 - alpha;
-            base[i] = (overlay[i] as f32 * alpha + base[i] as f32 * inv_alpha) as u8;
-            base[i + 1] = (overlay[i + 1] as f32 * alpha + base[i + 1] as f32 * inv_alpha) as u8;
-            base[i + 2] = (overlay[i + 2] as f32 * alpha + base[i + 2] as f32 * inv_alpha) as u8;
-            let a_base = base[i + 3] as f32 / 255.0;
-            let combined_a = alpha + a_base * inv_alpha;
-            base[i + 3] = (combined_a * 255.0) as u8;
+        }
+        let src_row_offset = dy * overlay_w * 4;
+        let dest_row_offset = (dest_y as usize) * base_w * 4;
+        
+        for dx in 0..overlay_w {
+            let dest_x = offset_x + dx as i32;
+            if dest_x < 0 || dest_x >= base_w as i32 {
+                continue;
+            }
+            let src_idx = src_row_offset + dx * 4;
+            let dest_idx = dest_row_offset + (dest_x as usize) * 4;
+            
+            let a_overlay = (overlay[src_idx + 3] as f32 * opacity) as u8;
+            if a_overlay == 0 {
+                continue;
+            } else if a_overlay == 255 {
+                base[dest_idx] = overlay[src_idx];
+                base[dest_idx + 1] = overlay[src_idx + 1];
+                base[dest_idx + 2] = overlay[src_idx + 2];
+                base[dest_idx + 3] = a_overlay;
+            } else {
+                let alpha = a_overlay as f32 / 255.0;
+                let inv_alpha = 1.0 - alpha;
+                base[dest_idx] = (overlay[src_idx] as f32 * alpha + base[dest_idx] as f32 * inv_alpha) as u8;
+                base[dest_idx + 1] = (overlay[src_idx + 1] as f32 * alpha + base[dest_idx + 1] as f32 * inv_alpha) as u8;
+                base[dest_idx + 2] = (overlay[src_idx + 2] as f32 * alpha + base[dest_idx + 2] as f32 * inv_alpha) as u8;
+                let a_base = base[dest_idx + 3] as f32 / 255.0;
+                let combined_a = alpha + a_base * inv_alpha;
+                base[dest_idx + 3] = (combined_a * 255.0) as u8;
+            }
         }
     }
 }
@@ -733,12 +762,43 @@ fn render_timeline_frame(
         
         let target_src_us = t_us - tc.start_us + tc.clip.trim_in_us();
         if let Some(frame) = state.get_frame_at(target_src_us) {
-            if frame.width != width || frame.height != height {
-                let mut resized = vec![0u8; (width * height * 4) as usize];
-                resize_rgba(&frame.rgba, frame.width as usize, frame.height as usize, &mut resized, width as usize, height as usize);
-                composite_rgba(&mut canvas, &resized);
+            let scale = tc.clip.scale;
+            let overlay_w = (frame.width as f32 * scale).round() as usize;
+            let overlay_h = (frame.height as f32 * scale).round() as usize;
+            let overlay_w = overlay_w.max(1);
+            let overlay_h = overlay_h.max(1);
+            
+            let center_offset_x = (width as i32 - overlay_w as i32) / 2;
+            let center_offset_y = (height as i32 - overlay_h as i32) / 2;
+            let offset_x = tc.clip.position_x + center_offset_x;
+            let offset_y = tc.clip.position_y + center_offset_y;
+            
+            if overlay_w != frame.width as usize || overlay_h != frame.height as usize {
+                let mut resized = vec![0u8; overlay_w * overlay_h * 4];
+                resize_rgba(&frame.rgba, frame.width as usize, frame.height as usize, &mut resized, overlay_w, overlay_h);
+                composite_rgba_transformed(
+                    &mut canvas,
+                    width as usize,
+                    height as usize,
+                    &resized,
+                    overlay_w,
+                    overlay_h,
+                    offset_x,
+                    offset_y,
+                    tc.clip.opacity,
+                );
             } else {
-                composite_rgba(&mut canvas, &frame.rgba);
+                composite_rgba_transformed(
+                    &mut canvas,
+                    width as usize,
+                    height as usize,
+                    &frame.rgba,
+                    frame.width as usize,
+                    frame.height as usize,
+                    offset_x,
+                    offset_y,
+                    tc.clip.opacity,
+                );
             }
         }
     }

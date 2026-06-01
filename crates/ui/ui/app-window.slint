@@ -47,6 +47,10 @@ export component AppWindow inherits Window {
     in property <string> selected-fps;
     in property <float> selected-volume;
     in property <bool> selected-muted;
+    in property <float> selected-opacity;
+    in property <float> selected-scale;
+    in property <int> selected-position-x;
+    in property <int> selected-position-y;
 
     // Aggregate stats
     in property <int> clip-count;
@@ -71,8 +75,10 @@ export component AppWindow inherits Window {
     in property <length> px-per-sec: 6px;
     in property <length> timeline-total-width: 0px;
 
-    // Drag-and-drop reorder state
-    in property <int> drag-from-index: -1;
+    // Drag-and-drop reorder state. `drag-from-id` is the source clip id while
+    // a drag is in flight (empty when idle); `drop-target-index` / `drop-indicator-x`
+    // describe the lane-local insertion point.
+    in property <string> drag-from-id;
     in property <int> drop-target-index: -1;
     in property <length> drop-indicator-x: 0px;
 
@@ -93,9 +99,9 @@ export component AppWindow inherits Window {
     callback zoom-out();
     callback jump-start();
     callback jump-end();
-    callback drag-started(int);
-    callback drag-moved(int, length);
-    callback drag-released(int, length);
+    callback drag-started(string);
+    callback drag-moved(string, length);
+    callback drag-released(string, length);
     callback trim-released(string, bool, length);
     callback split();
     callback ripple-delete();
@@ -115,6 +121,10 @@ export component AppWindow inherits Window {
     callback toggle-track-lock(int);
     callback selected-clip-volume-changed(float);
     callback selected-clip-muted-changed(bool);
+    callback selected-clip-opacity-changed(float);
+    callback selected-clip-scale-changed(float);
+    callback selected-clip-position-x-changed(int);
+    callback selected-clip-position-y-changed(int);
 
     in property <bool> master-muted;
 
@@ -274,15 +284,15 @@ export component AppWindow inherits Window {
                             px-per-sec: root.px-per-sec;
                             total-width: root.timeline-total-width;
                             playhead-fraction: root.playhead-fraction;
-                            drag-from-index: root.drag-from-index;
+                            drag-from-id: root.drag-from-id;
                             drop-target-index: root.drop-target-index;
                             drop-indicator-x: root.drop-indicator-x;
                             clip-clicked(id) => { root.clip-selected(id); }
                             remove-clicked(id) => { root.remove-clicked(id); }
                             seek-fraction(f) => { root.seek-fraction(f); }
-                            drag-started(i) => { root.drag-started(i); }
-                            drag-moved(i, dx) => { root.drag-moved(i, dx); }
-                            drag-released(i, dx) => { root.drag-released(i, dx); }
+                            drag-started(id) => { root.drag-started(id); }
+                            drag-moved(id, dx) => { root.drag-moved(id, dx); }
+                            drag-released(id, dx) => { root.drag-released(id, dx); }
                             trim-released(id, right, dx) => { root.trim-released(id, right, dx); }
                             request-split(id) => {
                                 root.clip-selected(id);
@@ -306,8 +316,16 @@ export component AppWindow inherits Window {
                     selected-fps: root.selected-fps;
                     selected-volume: root.selected-volume;
                     selected-muted: root.selected-muted;
+                    selected-opacity: root.selected-opacity;
+                    selected-scale: root.selected-scale;
+                    selected-position-x: root.selected-position-x;
+                    selected-position-y: root.selected-position-y;
                     volume-changed(v) => { root.selected-clip-volume-changed(v); }
                     muted-changed(m) => { root.selected-clip-muted-changed(m); }
+                    opacity-changed(o) => { root.selected-clip-opacity-changed(o); }
+                    scale-changed(s) => { root.selected-clip-scale-changed(s); }
+                    position-x-changed(x) => { root.selected-clip-position-x-changed(x); }
+                    position-y-changed(y) => { root.selected-clip-position-y-changed(y); }
                 }
             }
 

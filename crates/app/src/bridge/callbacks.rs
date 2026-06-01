@@ -17,6 +17,7 @@ use super::{
 };
 
 const DROP_TARGET_NONE: i32 = -1;
+const DRAG_ID_NONE: &str = "";
 
 pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeState) {
     {
@@ -37,14 +38,14 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
     }
     {
         let weak = window.as_weak();
-        window.on_drag_started(move |idx| on_drag_started(weak.clone(), idx));
+        window.on_drag_started(move |id| on_drag_started(weak.clone(), id));
     }
     {
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let zoom = state.zoom.clone();
-        window.on_drag_moved(move |idx, dx| {
-            on_drag_moved(weak.clone(), pl.clone(), zoom.clone(), idx, dx)
+        window.on_drag_moved(move |id, dx| {
+            on_drag_moved(weak.clone(), pl.clone(), zoom.clone(), id, dx)
         });
     }
     {
@@ -52,8 +53,8 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let pl = state.playlist.clone();
         let zoom = state.zoom.clone();
         let undo = state.undo.clone();
-        window.on_drag_released(move |idx, dx| {
-            on_drag_released(weak.clone(), pl.clone(), zoom.clone(), undo.clone(), idx, dx)
+        window.on_drag_released(move |id, dx| {
+            on_drag_released(weak.clone(), pl.clone(), zoom.clone(), undo.clone(), id, dx)
         });
     }
     {
@@ -335,6 +336,46 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let undo = state.undo.clone();
+        window.on_selected_clip_opacity_changed(move |opacity| {
+            on_selected_clip_opacity_changed(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), undo.clone(), opacity);
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let undo = state.undo.clone();
+        window.on_selected_clip_scale_changed(move |scale| {
+            on_selected_clip_scale_changed(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), undo.clone(), scale);
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let undo = state.undo.clone();
+        window.on_selected_clip_position_x_changed(move |x| {
+            on_selected_clip_position_x_changed(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), undo.clone(), x);
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let undo = state.undo.clone();
+        window.on_selected_clip_position_y_changed(move |y| {
+            on_selected_clip_position_y_changed(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), undo.clone(), y);
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
         let proj = state.project.clone();
         let tracks = state.tracks.clone();
         let aj = state.active_job.clone();
@@ -417,9 +458,9 @@ fn on_remove(
     sync_preview(&playlist, &tracks, &cmd_tx);
 }
 
-fn on_drag_started(weak: Weak<AppWindow>, idx: i32) {
+fn on_drag_started(weak: Weak<AppWindow>, id: SharedString) {
     if let Some(window) = weak.upgrade() {
-        window.set_drag_from_index(idx);
+        window.set_drag_from_id(id);
         window.set_drop_target_index(DROP_TARGET_NONE);
     }
 }
@@ -428,22 +469,20 @@ fn on_drag_moved(
     weak: Weak<AppWindow>,
     playlist: SharedPlaylist,
     zoom: SharedZoom,
-    idx: i32,
+    id: SharedString,
     delta_px: f32,
 ) {
-    if idx < 0 {
+    let Ok(uuid) = Uuid::parse_str(id.as_str()) else {
         return;
-    }
+    };
     let z = *zoom.lock().expect("zoom mutex poisoned");
     let pl = playlist.lock().expect("playlist mutex poisoned");
-    let Some((target_idx, indicator_x, _reorder_to)) =
-        timeline_view::drop_target(&pl, z, idx as usize, delta_px)
-    else {
+    let Some(out) = timeline_view::drop_target_for_clip(&pl, z, uuid, delta_px) else {
         return;
     };
     if let Some(window) = weak.upgrade() {
-        window.set_drop_target_index(target_idx as i32);
-        window.set_drop_indicator_x(indicator_x);
+        window.set_drop_target_index(out.local_gap as i32);
+        window.set_drop_indicator_x(out.indicator_x_px);
     }
 }
 
@@ -452,26 +491,24 @@ fn on_drag_released(
     playlist: SharedPlaylist,
     zoom: SharedZoom,
     undo: SharedUndo,
-    idx: i32,
+    id: SharedString,
     delta_px: f32,
 ) {
     let Some(window) = weak.upgrade() else { return };
-    window.set_drag_from_index(DROP_TARGET_NONE);
+    window.set_drag_from_id(SharedString::from(DRAG_ID_NONE));
     window.set_drop_target_index(DROP_TARGET_NONE);
 
-    if idx < 0 {
-        return;
-    }
-    let z = *zoom.lock().expect("zoom mutex poisoned");
-    let mut pl = playlist.lock().expect("playlist mutex poisoned");
-    let Some((_target_idx, _indicator_x, reorder_to)) =
-        timeline_view::drop_target(&pl, z, idx as usize, delta_px)
-    else {
+    let Ok(uuid) = Uuid::parse_str(id.as_str()) else {
         return;
     };
-    let Some(to) = reorder_to else { return };
+    let z = *zoom.lock().expect("zoom mutex poisoned");
+    let mut pl = playlist.lock().expect("playlist mutex poisoned");
+    let Some(out) = timeline_view::drop_target_for_clip(&pl, z, uuid, delta_px) else {
+        return;
+    };
+    let Some((from, to)) = out.reorder else { return };
     checkpoint(&undo, &pl);
-    if let Err(err) = pl.reorder(idx as usize, to) {
+    if let Err(err) = pl.reorder(from, to) {
         tracing::warn!(error = %err, "reorder failed");
         return;
     }
@@ -514,7 +551,7 @@ fn select_and_open(
     clip_id: Uuid,
     initial_seek_us: Option<i64>,
 ) {
-    let (_path, name, codec, resolution, duration, fps, _trim_in_us, _trim_out_us, volume, muted) = {
+    let (_path, name, codec, resolution, duration, fps, _trim_in_us, _trim_out_us, volume, muted, opacity, scale, position_x, position_y) = {
         let pl = playlist.lock().expect("playlist mutex poisoned");
         let Some(clip) = pl.clips().iter().find(|c| c.id == clip_id) else {
             return;
@@ -544,6 +581,10 @@ fn select_and_open(
             clip.trim_out_us(),
             clip.volume,
             clip.muted,
+            clip.opacity,
+            clip.scale,
+            clip.position_x,
+            clip.position_y,
         )
     };
 
@@ -573,6 +614,10 @@ fn select_and_open(
         window.set_selected_fps(SharedString::from(fps));
         window.set_selected_volume(volume);
         window.set_selected_muted(muted);
+        window.set_selected_opacity(opacity);
+        window.set_selected_scale(scale);
+        window.set_selected_position_x(position_x);
+        window.set_selected_position_y(position_y);
         window.set_playing(false);
     }
 
@@ -1417,6 +1462,92 @@ fn on_selected_clip_volume_changed(
             let z = *zoom.lock().expect("zoom mutex poisoned");
             timeline_view::refresh_ruler(&window, &pl, z);
         }
+        sync_preview(&playlist, &tracks, &cmd_tx);
+    }
+}
+
+fn on_selected_clip_opacity_changed(
+    weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
+    _undo: SharedUndo,
+    opacity: f32,
+) {
+    if let Some(window) = weak.upgrade() {
+        let sel_id = window.get_selected_id();
+        let Ok(uuid) = Uuid::parse_str(sel_id.as_str()) else { return; };
+        {
+            let mut pl = playlist.lock().expect("playlist mutex poisoned");
+            if let Some(c) = pl.clips_mut().iter_mut().find(|clip| clip.id == uuid) {
+                c.opacity = opacity;
+            }
+        }
+        sync_preview(&playlist, &tracks, &cmd_tx);
+    }
+}
+
+fn on_selected_clip_scale_changed(
+    weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
+    _undo: SharedUndo,
+    scale: f32,
+) {
+    if let Some(window) = weak.upgrade() {
+        let sel_id = window.get_selected_id();
+        let Ok(uuid) = Uuid::parse_str(sel_id.as_str()) else { return; };
+        {
+            let mut pl = playlist.lock().expect("playlist mutex poisoned");
+            if let Some(c) = pl.clips_mut().iter_mut().find(|clip| clip.id == uuid) {
+                c.scale = scale;
+            }
+        }
+        sync_preview(&playlist, &tracks, &cmd_tx);
+    }
+}
+
+fn on_selected_clip_position_x_changed(
+    weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
+    _undo: SharedUndo,
+    pos_x: i32,
+) {
+    if let Some(window) = weak.upgrade() {
+        let sel_id = window.get_selected_id();
+        let Ok(uuid) = Uuid::parse_str(sel_id.as_str()) else { return; };
+        {
+            let mut pl = playlist.lock().expect("playlist mutex poisoned");
+            if let Some(c) = pl.clips_mut().iter_mut().find(|clip| clip.id == uuid) {
+                c.position_x = pos_x;
+            }
+        }
+        window.set_selected_position_x(pos_x);
+        sync_preview(&playlist, &tracks, &cmd_tx);
+    }
+}
+
+fn on_selected_clip_position_y_changed(
+    weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
+    _undo: SharedUndo,
+    pos_y: i32,
+) {
+    if let Some(window) = weak.upgrade() {
+        let sel_id = window.get_selected_id();
+        let Ok(uuid) = Uuid::parse_str(sel_id.as_str()) else { return; };
+        {
+            let mut pl = playlist.lock().expect("playlist mutex poisoned");
+            if let Some(c) = pl.clips_mut().iter_mut().find(|clip| clip.id == uuid) {
+                c.position_y = pos_y;
+            }
+        }
+        window.set_selected_position_y(pos_y);
         sync_preview(&playlist, &tracks, &cmd_tx);
     }
 }
