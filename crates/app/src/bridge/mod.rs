@@ -40,12 +40,39 @@ pub struct AudioState {
     pub master_volume: f32, // 1.0 = unity
 }
 
-/// Per-track UI/playback flags. Index 0 = V1, 1 = V2, 2 = A1, 3 = A2.
+/// Per-track UI/playback flags. Indexed by `project.tracks` index.
 #[derive(Debug, Default, Clone)]
 pub struct TracksState {
-    pub muted: [bool; 4],
-    pub soloed: [bool; 4],
-    pub locked: [bool; 4],
+    pub muted: Vec<bool>,
+    pub soloed: Vec<bool>,
+    pub locked: Vec<bool>,
+}
+
+impl TracksState {
+    /// Initialize flags for a project's current track count, all `false`.
+    pub fn for_project(project: &video_merger_core::domain::Project) -> Self {
+        let n = project.tracks.len();
+        Self {
+            muted: vec![false; n],
+            soloed: vec![false; n],
+            locked: vec![false; n],
+        }
+    }
+
+    /// Resize all three vectors to match `n`, preserving existing values
+    /// and defaulting new slots to `false`.
+    pub fn resize(&mut self, n: usize) {
+        self.muted.resize(n, false);
+        self.soloed.resize(n, false);
+        self.locked.resize(n, false);
+    }
+
+    /// Remove the flag slot at `idx`, shifting later entries down.
+    pub fn remove(&mut self, idx: usize) {
+        if idx < self.muted.len() { self.muted.remove(idx); }
+        if idx < self.soloed.len() { self.soloed.remove(idx); }
+        if idx < self.locked.len() { self.locked.remove(idx); }
+    }
 }
 
 pub type SharedTracks = Arc<Mutex<TracksState>>;

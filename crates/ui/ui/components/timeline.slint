@@ -11,7 +11,21 @@ export struct RulerTick {
     major: bool,
 }
 
-/// Single lane that renders clips belonging to one video track.
+/// Per-track data passed from Rust. `clips` is a Slint model of ClipData;
+/// `video-track-value` is the u8 value that `clip.video-track` should equal
+/// for a clip that lives on this track (legacy semantic for V1/V2/A1/A2,
+/// project-index for user-added tracks).
+export struct TrackData {
+    name: string,
+    is-audio: bool,
+    clips: [ClipData],
+    muted: bool,
+    soloed: bool,
+    locked: bool,
+    video-track-value: int,
+}
+
+/// Single lane that renders clips belonging to one track.
 component TrackLane inherits Rectangle {
     in property <[ClipData]> clips;
     in property <string> selected-id;
@@ -55,10 +69,8 @@ component TrackLane inherits Rectangle {
 }
 
 export component Timeline inherits Rectangle {
-    in property <[ClipData]> clips-v1;
-    in property <[ClipData]> clips-v2;
-    in property <[ClipData]> clips-a1;
-    in property <[ClipData]> clips-a2;
+    in property <[TrackData]> tracks;
+    in property <[ClipData]> all-clips;     // used only for empty-state check
     in property <[RulerTick]> ruler-ticks;
     in property <string> selected-id;
     in property <length> px-per-sec: 6px;
@@ -68,21 +80,6 @@ export component Timeline inherits Rectangle {
     in property <string> drag-from-id;
     in property <int> drop-target-index: -1;
     in property <length> drop-indicator-x: 0px;
-
-    in property <bool> v1-muted;
-    in property <bool> v2-muted;
-    in property <bool> a1-muted;
-    in property <bool> a2-muted;
-
-    in property <bool> v1-soloed;
-    in property <bool> v2-soloed;
-    in property <bool> a1-soloed;
-    in property <bool> a2-soloed;
-
-    in property <bool> v1-locked;
-    in property <bool> v2-locked;
-    in property <bool> a1-locked;
-    in property <bool> a2-locked;
 
     callback clip-clicked(string);
     callback remove-clicked(string);
@@ -97,8 +94,25 @@ export component Timeline inherits Rectangle {
     callback toggle-track-mute(int);
     callback toggle-track-solo(int);
     callback toggle-track-lock(int);
+    callback add-video-track();
+    callback add-audio-track();
+    callback delete-track(int);
 
     background: Palette.background;
+
+    // Per-lane visual height.
+    property <length> lane-height: 80px;
+    property <length> lane-gap: 4px;
+    property <length> ruler-height: 24px;
+    property <length> ruler-offset: 2px;
+    property <length> header-rail-width: 60px;
+    property <length> add-row-height: 28px;
+
+    // Total scrollable content height = ruler + N * (lane + gap) + add buttons row.
+    property <length> content-height:
+        root.ruler-height + root.ruler-offset
+        + root.tracks.length * (root.lane-height + root.lane-gap)
+        + root.add-row-height;
 
     VerticalLayout {
         padding: Theme.spacing-md;
@@ -117,17 +131,17 @@ export component Timeline inherits Rectangle {
                 vertical-alignment: center;
             }
             Text {
-                text: (root.clips-v1.length + root.clips-v2.length + root.clips-a1.length + root.clips-a2.length) == 0
+                text: root.all-clips.length == 0
                     ? "Empty"
-                    : (root.clips-v1.length + root.clips-v2.length + root.clips-a1.length + root.clips-a2.length) + " clips · 4 tracks · drag-drop video files · right-click to switch tracks";
+                    : root.all-clips.length + " clips · " + root.tracks.length + " tracks · right-click track header to delete";
                 color: Palette.text-dim;
                 font-size: Theme.font-xs;
                 vertical-alignment: center;
             }
         }
 
-        // Lane container — fixed-width left rail with TrackHeaders, scrollable right region for ruler + lanes.
         Rectangle {
+            // Fixed visible height (the inner content scrolls).
             height: 364px;
             border-radius: Theme.radius;
             background: Palette.surface;
@@ -138,67 +152,77 @@ export component Timeline inherits Rectangle {
             HorizontalLayout {
                 spacing: 0px;
 
-                // Left rail: track headers
+                // Left rail: track headers + add-track buttons stacked.
                 Rectangle {
-                    width: 60px;
+                    width: root.header-rail-width;
                     background: Palette.surface;
                     VerticalLayout {
-                        padding-top: 26px; // align with ruler height (24px ruler + 2px offset)
+                        padding-top: root.ruler-height + root.ruler-offset;
                         padding-left: 2px;
                         padding-right: 2px;
-                        spacing: 4px;
-                        TrackHeader {
-                            label: "V2";
-                            badge-color: Palette.accent-2;
-                            muted: root.v2-muted;
-                            soloed: root.v2-soloed;
-                            locked: root.v2-locked;
-                            height: 80px;
-                            toggle-mute => { root.toggle-track-mute(1); }
-                            toggle-solo => { root.toggle-track-solo(1); }
-                            toggle-lock => { root.toggle-track-lock(1); }
+                        spacing: root.lane-gap;
+                        for track[idx] in root.tracks : TrackHeader {
+                            label: track.name;
+                            badge-color: track.is-audio ? Palette.success : Palette.accent;
+                            muted: track.muted;
+                            soloed: track.soloed;
+                            locked: track.locked;
+                            // Don't let users delete the very last track.
+                            deletable: root.tracks.length > 1;
+                            height: root.lane-height;
+                            toggle-mute => { root.toggle-track-mute(idx); }
+                            toggle-solo => { root.toggle-track-solo(idx); }
+                            toggle-lock => { root.toggle-track-lock(idx); }
+                            delete-track => { root.delete-track(idx); }
                         }
-                        TrackHeader {
-                            label: "V1";
-                            badge-color: Palette.accent;
-                            muted: root.v1-muted;
-                            soloed: root.v1-soloed;
-                            locked: root.v1-locked;
-                            height: 80px;
-                            toggle-mute => { root.toggle-track-mute(0); }
-                            toggle-solo => { root.toggle-track-solo(0); }
-                            toggle-lock => { root.toggle-track-lock(0); }
-                        }
-                        TrackHeader {
-                            label: "A1";
-                            badge-color: Palette.success;
-                            muted: root.a1-muted;
-                            soloed: root.a1-soloed;
-                            locked: root.a1-locked;
-                            height: 80px;
-                            toggle-mute => { root.toggle-track-mute(2); }
-                            toggle-solo => { root.toggle-track-solo(2); }
-                            toggle-lock => { root.toggle-track-lock(2); }
-                        }
-                        TrackHeader {
-                            label: "A2";
-                            badge-color: Palette.success;
-                            muted: root.a2-muted;
-                            soloed: root.a2-soloed;
-                            locked: root.a2-locked;
-                            height: 80px;
-                            toggle-mute => { root.toggle-track-mute(3); }
-                            toggle-solo => { root.toggle-track-solo(3); }
-                            toggle-lock => { root.toggle-track-lock(3); }
+                        // Add-track buttons.
+                        HorizontalLayout {
+                            spacing: 2px;
+                            height: root.add-row-height;
+                            add-video := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.add-video-track(); }
+                                Rectangle {
+                                    border-radius: Theme.radius-sm;
+                                    background: add-video.has-hover ? Palette.accent : Palette.surface-3;
+                                    border-width: 1px;
+                                    border-color: Palette.border;
+                                    Text {
+                                        text: "+V";
+                                        color: add-video.has-hover ? white : Palette.text;
+                                        font-size: 10px;
+                                        font-weight: 700;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                            add-audio := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.add-audio-track(); }
+                                Rectangle {
+                                    border-radius: Theme.radius-sm;
+                                    background: add-audio.has-hover ? Palette.success : Palette.surface-3;
+                                    border-width: 1px;
+                                    border-color: Palette.border;
+                                    Text {
+                                        text: "+A";
+                                        color: add-audio.has-hover ? white : Palette.text;
+                                        font-size: 10px;
+                                        font-weight: 700;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
-                // Right side: ruler + lanes
                 Rectangle {
                     horizontal-stretch: 1;
 
-                    if (root.clips-v1.length + root.clips-v2.length + root.clips-a1.length + root.clips-a2.length) == 0 : VerticalLayout {
+                    if root.all-clips.length == 0 : VerticalLayout {
                         alignment: center;
                         spacing: Theme.spacing-xs;
                         Text {
@@ -216,20 +240,20 @@ export component Timeline inherits Rectangle {
                         }
                     }
 
-                    if (root.clips-v1.length + root.clips-v2.length + root.clips-a1.length + root.clips-a2.length) > 0 : ScrollView {
+                    if root.all-clips.length > 0 : ScrollView {
                         viewport-height: self.visible-height;
                         viewport-width: max(root.total-width + 12px, self.visible-width);
 
                         Rectangle {
                             width: max(root.total-width + 12px, parent.width);
-                            height: 362px;
+                            height: root.content-height;
 
-                            // Ruler strip
+                            // Ruler strip.
                             Rectangle {
                                 x: 0;
                                 y: 0;
                                 width: parent.width;
-                                height: 24px;
+                                height: root.ruler-height;
                                 background: Palette.surface-2;
 
                                 Rectangle {
@@ -268,16 +292,16 @@ export component Timeline inherits Rectangle {
                                 }
                             }
 
-                            // V2 lane (top, 80px)
-                            v2-lane := TrackLane {
+                            // Per-track lanes, stacked.
+                            for track[idx] in root.tracks : TrackLane {
                                 x: 0;
-                                y: 26px;
+                                y: root.ruler-height + root.ruler-offset + idx * (root.lane-height + root.lane-gap);
                                 width: parent.width;
-                                height: 80px;
-                                background: root.v2-muted
+                                height: root.lane-height;
+                                background: track.muted
                                     ? Palette.danger-soft
-                                    : (root.clips-v2.length == 0 ? Palette.background : transparent);
-                                clips: root.clips-v2;
+                                    : (track.clips.length == 0 ? Palette.background : transparent);
+                                clips: track.clips;
                                 selected-id: root.selected-id;
                                 px-per-sec: root.px-per-sec;
                                 drag-from-id: root.drag-from-id;
@@ -292,86 +316,14 @@ export component Timeline inherits Rectangle {
                                 move-to-track(id, t)  => { root.move-to-track(id, t); }
                             }
 
-                            // V1 lane (80px)
-                            v1-lane := TrackLane {
-                                x: 0;
-                                y: 110px;
-                                width: parent.width;
-                                height: 80px;
-                                background: root.v1-muted
-                                    ? Palette.danger-soft
-                                    : (root.clips-v1.length == 0 ? Palette.background : transparent);
-                                clips: root.clips-v1;
-                                selected-id: root.selected-id;
-                                px-per-sec: root.px-per-sec;
-                                drag-from-id: root.drag-from-id;
-                                clip-clicked(id)      => { root.clip-clicked(id); }
-                                remove-clicked(id)    => { root.remove-clicked(id); }
-                                drag-started(id)      => { root.drag-started(id); }
-                                drag-moved(id, dx)    => { root.drag-moved(id, dx); }
-                                drag-released(id, dx) => { root.drag-released(id, dx); }
-                                trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
-                                request-split(id)     => { root.request-split(id); }
-                                reveal-in-finder(id)  => { root.reveal-in-finder(id); }
-                                move-to-track(id, t)  => { root.move-to-track(id, t); }
-                            }
-
-                            // A1 lane (80px)
-                            a1-lane := TrackLane {
-                                x: 0;
-                                y: 194px;
-                                width: parent.width;
-                                height: 80px;
-                                background: root.a1-muted
-                                    ? Palette.danger-soft
-                                    : (root.clips-a1.length == 0 ? Palette.background : transparent);
-                                clips: root.clips-a1;
-                                selected-id: root.selected-id;
-                                px-per-sec: root.px-per-sec;
-                                drag-from-id: root.drag-from-id;
-                                clip-clicked(id)      => { root.clip-clicked(id); }
-                                remove-clicked(id)    => { root.remove-clicked(id); }
-                                drag-started(id)      => { root.drag-started(id); }
-                                drag-moved(id, dx)    => { root.drag-moved(id, dx); }
-                                drag-released(id, dx) => { root.drag-released(id, dx); }
-                                trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
-                                request-split(id)     => { root.request-split(id); }
-                                reveal-in-finder(id)  => { root.reveal-in-finder(id); }
-                                move-to-track(id, t)  => { root.move-to-track(id, t); }
-                            }
-
-                            // A2 lane (80px)
-                            a2-lane := TrackLane {
-                                x: 0;
-                                y: 278px;
-                                width: parent.width;
-                                height: 80px;
-                                background: root.a2-muted
-                                    ? Palette.danger-soft
-                                    : (root.clips-a2.length == 0 ? Palette.background : transparent);
-                                clips: root.clips-a2;
-                                selected-id: root.selected-id;
-                                px-per-sec: root.px-per-sec;
-                                drag-from-id: root.drag-from-id;
-                                clip-clicked(id)      => { root.clip-clicked(id); }
-                                remove-clicked(id)    => { root.remove-clicked(id); }
-                                drag-started(id)      => { root.drag-started(id); }
-                                drag-moved(id, dx)    => { root.drag-moved(id, dx); }
-                                drag-released(id, dx) => { root.drag-released(id, dx); }
-                                trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
-                                request-split(id)     => { root.request-split(id); }
-                                reveal-in-finder(id)  => { root.reveal-in-finder(id); }
-                                move-to-track(id, t)  => { root.move-to-track(id, t); }
-                            }
-
-                            // Drop indicator (drawn over active lanes)
+                            // Drop indicator spans all lanes vertically.
                             if root.drop-target-index >= 0 : DropIndicator {
                                 x: root.drop-indicator-x;
-                                y: 26px;
-                                height: 332px;
+                                y: root.ruler-height + root.ruler-offset;
+                                height: root.tracks.length * (root.lane-height + root.lane-gap) - root.lane-gap;
                             }
 
-                            // Playhead spans both lanes
+                            // Playhead spans the full content vertically.
                             Rectangle {
                                 visible: root.selected-id != "" && root.total-width > 0px;
                                 x: root.playhead-fraction * parent.width;

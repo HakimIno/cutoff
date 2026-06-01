@@ -4,11 +4,11 @@ import { Header } from "components/header.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { PreviewPanel } from "components/preview-panel.slint";
 import { DetailsPanel } from "components/details-panel.slint";
-import { Timeline, RulerTick } from "components/timeline.slint";
+import { Timeline, RulerTick, TrackData } from "components/timeline.slint";
 import { StatusFooter } from "components/status-footer.slint";
 import { ClipData } from "components/clip-card.slint";
 
-export { RulerTick }
+export { RulerTick, TrackData }
 
 export component AppWindow inherits Window {
     title: "cutoff — Pro Video Editor";
@@ -18,24 +18,12 @@ export component AppWindow inherits Window {
     min-height: 640px;
     background: Palette.background;
 
-    // Timeline state (split by track — V2 overlay above V1 base)
-    in property <[ClipData]> clips;          // all clips, used by sidebar count/preview lookup
-    in property <[ClipData]> clips-v1;
-    in property <[ClipData]> clips-v2;
-    in property <[ClipData]> clips-a1;
-    in property <[ClipData]> clips-a2;
-    in property <bool> v1-muted;
-    in property <bool> v2-muted;
-    in property <bool> a1-muted;
-    in property <bool> a2-muted;
-    in property <bool> v1-soloed;
-    in property <bool> v2-soloed;
-    in property <bool> a1-soloed;
-    in property <bool> a2-soloed;
-    in property <bool> v1-locked;
-    in property <bool> v2-locked;
-    in property <bool> a1-locked;
-    in property <bool> a2-locked;
+    // Flat list of all clips — used by Sidebar and as an emptiness check.
+    in property <[ClipData]> clips;
+    // Dynamic per-track model. Each TrackData carries its own clips list and
+    // mute/solo/lock flags. Default project has 4 tracks (V2, V1, A1, A2);
+    // users can add more via the +V / +A buttons in the timeline.
+    in property <[TrackData]> tracks;
     in property <string> selected-id;
     in property <bool> has-selection;
 
@@ -119,6 +107,9 @@ export component AppWindow inherits Window {
     callback toggle-track-mute(int);
     callback toggle-track-solo(int);
     callback toggle-track-lock(int);
+    callback add-video-track();
+    callback add-audio-track();
+    callback delete-track(int);
     callback selected-clip-volume-changed(float);
     callback selected-clip-muted-changed(bool);
     callback selected-clip-opacity-changed(float);
@@ -263,22 +254,8 @@ export component AppWindow inherits Window {
                             background: Palette.border;
                         }
                         Timeline {
-                            clips-v1: root.clips-v1;
-                            clips-v2: root.clips-v2;
-                            clips-a1: root.clips-a1;
-                            clips-a2: root.clips-a2;
-                            v1-muted: root.v1-muted;
-                            v2-muted: root.v2-muted;
-                            a1-muted: root.a1-muted;
-                            a2-muted: root.a2-muted;
-                            v1-soloed: root.v1-soloed;
-                            v2-soloed: root.v2-soloed;
-                            a1-soloed: root.a1-soloed;
-                            a2-soloed: root.a2-soloed;
-                            v1-locked: root.v1-locked;
-                            v2-locked: root.v2-locked;
-                            a1-locked: root.a1-locked;
-                            a2-locked: root.a2-locked;
+                            tracks: root.tracks;
+                            all-clips: root.clips;
                             ruler-ticks: root.ruler-ticks;
                             selected-id: root.selected-id;
                             px-per-sec: root.px-per-sec;
@@ -303,6 +280,9 @@ export component AppWindow inherits Window {
                             toggle-track-mute(t) => { root.toggle-track-mute(t); }
                             toggle-track-solo(t) => { root.toggle-track-solo(t); }
                             toggle-track-lock(t) => { root.toggle-track-lock(t); }
+                            add-video-track => { root.add-video-track(); }
+                            add-audio-track => { root.add-audio-track(); }
+                            delete-track(t) => { root.delete-track(t); }
                         }
                     }
                 }

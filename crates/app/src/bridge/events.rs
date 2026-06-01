@@ -64,24 +64,19 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             let wf_path = waveform_path(&state.storage.data_dir, clip_id);
             enqueue_waveform(cmd_tx, clip_id, path, wf_path);
 
-            // Sync preview
+            // Sync preview + refresh per-track lanes in the UI.
             let project = {
                 let pl = state.playlist.lock().expect("playlist mutex poisoned");
                 let ts = state.tracks.lock().expect("tracks mutex poisoned");
-                let mut project = video_merger_core::domain::Project::from_playlist(&pl);
-                for track in &mut project.tracks {
-                    let state_idx = match track.name.as_str() {
-                        "V1" => 0,
-                        "V2" => 1,
-                        "A1" => 2,
-                        "A2" => 3,
-                        _ => continue,
-                    };
-                    track.muted = ts.muted[state_idx];
-                    track.solo = ts.soloed[state_idx];
-                    track.locked = ts.locked[state_idx];
+                let mut proj = state.project.lock().expect("project mutex poisoned");
+                proj.populate_from_playlist(&pl);
+                for (idx, track) in proj.tracks.iter_mut().enumerate() {
+                    track.muted = ts.muted.get(idx).copied().unwrap_or(false);
+                    track.solo = ts.soloed.get(idx).copied().unwrap_or(false);
+                    track.locked = ts.locked.get(idx).copied().unwrap_or(false);
                 }
-                project
+                models::sync_tracks(window, &proj, &ts);
+                proj.clone()
             };
             let _ = cmd_tx.try_send(Command::OpenPreview { project });
         }
@@ -103,24 +98,19 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             let wf_path = waveform_path(&state.storage.data_dir, clip_id);
             enqueue_waveform(cmd_tx, clip_id, path, wf_path);
 
-            // Sync preview
+            // Sync preview + refresh per-track lanes in the UI.
             let project = {
                 let pl = state.playlist.lock().expect("playlist mutex poisoned");
                 let ts = state.tracks.lock().expect("tracks mutex poisoned");
-                let mut project = video_merger_core::domain::Project::from_playlist(&pl);
-                for track in &mut project.tracks {
-                    let state_idx = match track.name.as_str() {
-                        "V1" => 0,
-                        "V2" => 1,
-                        "A1" => 2,
-                        "A2" => 3,
-                        _ => continue,
-                    };
-                    track.muted = ts.muted[state_idx];
-                    track.solo = ts.soloed[state_idx];
-                    track.locked = ts.locked[state_idx];
+                let mut proj = state.project.lock().expect("project mutex poisoned");
+                proj.populate_from_playlist(&pl);
+                for (idx, track) in proj.tracks.iter_mut().enumerate() {
+                    track.muted = ts.muted.get(idx).copied().unwrap_or(false);
+                    track.solo = ts.soloed.get(idx).copied().unwrap_or(false);
+                    track.locked = ts.locked.get(idx).copied().unwrap_or(false);
                 }
-                project
+                models::sync_tracks(window, &proj, &ts);
+                proj.clone()
             };
             let _ = cmd_tx.try_send(Command::OpenPreview { project });
         }

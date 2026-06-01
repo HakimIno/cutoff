@@ -15,7 +15,7 @@ use tracing_subscriber::EnvFilter;
 use video_merger_core::domain::Project;
 use video_merger_engine::ffmpeg::FfmpegEngine;
 use video_merger_persistence::{AppConfig, History, Storage};
-use video_merger_ui::{AppWindow, ClipData};
+use video_merger_ui::{AppWindow, ClipData, TrackData};
 use video_merger_worker::WorkerHandle;
 
 use bridge::BridgeState;
@@ -65,11 +65,9 @@ fn main() -> Result<()> {
     let window = AppWindow::new()?;
 
     let clips_model: Rc<VecModel<ClipData>> = Rc::new(VecModel::default());
-    let clips_v1_model: Rc<VecModel<ClipData>> = Rc::new(VecModel::default());
-    let clips_v2_model: Rc<VecModel<ClipData>> = Rc::new(VecModel::default());
+    let tracks_model: Rc<VecModel<TrackData>> = Rc::new(VecModel::default());
     window.set_clips(ModelRc::from(clips_model));
-    window.set_clips_v1(ModelRc::from(clips_v1_model));
-    window.set_clips_v2(ModelRc::from(clips_v2_model));
+    window.set_tracks(ModelRc::from(tracks_model));
     window.set_status_text("Ready".into());
     window.set_exporting(false);
 
@@ -77,6 +75,7 @@ fn main() -> Result<()> {
     // mutations into the UI thread via Send-bounded closures.
     let project = Project::with_default_tracks();
     let playlist = project.to_playlist();
+    let tracks_state = bridge::TracksState::for_project(&project);
 
     let state = BridgeState {
         playlist: Arc::new(Mutex::new(playlist)),
@@ -93,8 +92,15 @@ fn main() -> Result<()> {
             master_muted: false,
             master_volume: 1.0,
         })),
-        tracks: Arc::new(Mutex::new(bridge::TracksState::default())),
+        tracks: Arc::new(Mutex::new(tracks_state)),
     };
+
+    // Render the initial empty tracks into the UI model.
+    {
+        let project = state.project.lock().expect("project mutex poisoned");
+        let ts = state.tracks.lock().expect("tracks mutex poisoned");
+        bridge::models::sync_tracks(&window, &project, &ts);
+    }
 
     window.set_px_per_sec(bridge::ZOOM_DEFAULT);
 

@@ -10,9 +10,11 @@ export component TrackHeader inherits Rectangle {
     in property <bool> soloed;
     in property <bool> locked;
 
+    in property <bool> deletable: true;
     callback toggle-mute();
     callback toggle-solo();
     callback toggle-lock();
+    callback delete-track();
 
     width: 56px;
     background: Palette.surface-2;
@@ -119,6 +121,16 @@ export component TrackHeader inherits Rectangle {
                         y: (parent.height - self.height) / 2;
                     }
                 }
+            }
+        }
+    }
+
+    // Right-click → Delete this track. Only enabled when `deletable`.
+    if root.deletable : ContextMenuArea {
+        Menu {
+            MenuItem {
+                title: "Delete track \"" + root.label + "\"";
+                activated => { root.delete-track(); }
             }
         }
     }

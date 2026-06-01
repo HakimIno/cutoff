@@ -54,41 +54,59 @@ component StudioSlider inherits Rectangle {
             font-weight: 600;
             vertical-alignment: center;
         }
-        // Slider Track
+        // Slider Track Container
         Rectangle {
             horizontal-stretch: 1;
-            height: 4px;
-            background: Palette.border;
-            border-radius: 2px;
-            y: (parent.height - self.height) / 2;
+            height: 100%;
 
-            // Fill Track
-            Rectangle {
-                x: 0;
-                width: parent.width * (root.value / root.max-val);
-                height: 100%;
-                background: Palette.accent;
+            // Track Background
+            track-bg := Rectangle {
+                width: 100%;
+                height: 4px;
+                background: Palette.border;
                 border-radius: 2px;
+                y: (parent.height - self.height) / 2;
+
+                // Fill Track
+                Rectangle {
+                    x: 0;
+                    width: parent.width * (root.value / root.max-val);
+                    height: 100%;
+                    background: Palette.accent;
+                    border-radius: 2px;
+                }
+
+                // Handle
+                handle := Rectangle {
+                    x: (parent.width - self.width) * (root.value / root.max-val);
+                    width: 10px; height: 10px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 5px;
+                    background: ta.has-hover ? white : Palette.text;
+                    border-width: 1px;
+                    border-color: Palette.border-bright;
+                }
             }
 
-            // Handle
-            handle := Rectangle {
-                x: (parent.width - self.width) * (root.value / root.max-val);
-                width: 10px; height: 10px;
-                y: (parent.height - self.height) / 2;
-                border-radius: 5px;
-                background: ta.has-hover ? white : Palette.text;
-                border-width: 1px;
-                border-color: Palette.border-bright;
+            ta := TouchArea {
+                width: 100%;
+                height: 100%;
+                mouse-cursor: pointer;
 
-                ta := TouchArea {
-                    moved => {
-                        if (self.pressed) {
-                            let fraction = max(0.0, min(1.0, (self.mouse-x - self.pressed-x + handle.x) / parent.width));
-                            let new-val = fraction * root.max-val;
-                            root.value = new-val;
-                            root.changed(new-val);
-                        }
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down) {
+                        let fraction = self.width > 0px ? max(0.0, min(1.0, self.mouse-x / self.width)) : 0.0;
+                        let new-val = fraction * root.max-val;
+                        root.value = new-val;
+                        root.changed(new-val);
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        let fraction = self.width > 0px ? max(0.0, min(1.0, self.mouse-x / self.width)) : 0.0;
+                        let new-val = fraction * root.max-val;
+                        root.value = new-val;
+                        root.changed(new-val);
                     }
                 }
             }
@@ -335,13 +353,17 @@ export component DetailsPanel inherits Rectangle {
                                 vertical-alignment: center;
                             }
                             ta-x := TouchArea {
+                                property <int> start-val: 0;
                                 mouse-cursor: ew-resize;
+                                pointer-event(e) => {
+                                    if (e.kind == PointerEventKind.down) {
+                                        self.start-val = root.selected-position-x;
+                                    }
+                                }
                                 moved => {
                                     if (self.pressed) {
                                         let delta = (self.mouse-x - self.pressed-x) / 1px;
-                                        if (abs(delta) >= 1.0) {
-                                            root.position-x-changed(root.selected-position-x + Math.round(delta));
-                                        }
+                                        root.position-x-changed(self.start-val + Math.round(delta));
                                     }
                                 }
                             }
@@ -359,14 +381,18 @@ export component DetailsPanel inherits Rectangle {
                                 vertical-alignment: center;
                             }
                             ta-y := TouchArea {
+                                property <int> start-val: 0;
                                 mouse-cursor: ew-resize;
+                                pointer-event(e) => {
+                                    if (e.kind == PointerEventKind.down) {
+                                        self.start-val = root.selected-position-y;
+                                    }
+                                }
                                 moved => {
                                     if (self.pressed) {
                                         let delta = (self.mouse-x - self.pressed-x) / 1px;
-                                        if (abs(delta) >= 1.0) {
-                                            // dragging horizontally adjusts vertical position (Resolve style)
-                                            root.position-y-changed(root.selected-position-y - Math.round(delta));
-                                        }
+                                        // dragging horizontally adjusts vertical position (Resolve style)
+                                        root.position-y-changed(self.start-val - Math.round(delta));
                                     }
                                 }
                             }
