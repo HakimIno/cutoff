@@ -47,6 +47,8 @@ export component AppWindow inherits Window {
     in property <float> selected-brightness: 0.0;
     in property <float> selected-contrast: 1.0;
     in property <float> selected-saturation: 1.0;
+    in property <string> selected-opacity-interp: "linear";
+    in property <string> selected-rotation-interp: "linear";
     in property <bool> selected-opacity-animated;
     in property <bool> selected-opacity-key;
     in property <bool> selected-scale-animated;
@@ -149,6 +151,7 @@ export component AppWindow inherits Window {
     callback selected-clip-saturation-changed(float);
     callback selected-clip-transform-gesture-begin();
     callback selected-clip-keyframe-toggle(int);
+    callback selected-clip-keyframe-interp-changed(int, string);
 
     in property <bool> master-muted;
 
@@ -371,6 +374,8 @@ export component AppWindow inherits Window {
                     selected-brightness: root.selected-brightness;
                     selected-contrast: root.selected-contrast;
                     selected-saturation: root.selected-saturation;
+                    selected-opacity-interp: root.selected-opacity-interp;
+                    selected-rotation-interp: root.selected-rotation-interp;
                     selected-opacity-animated: root.selected-opacity-animated;
                     selected-opacity-key: root.selected-opacity-key;
                     selected-scale-animated: root.selected-scale-animated;
@@ -397,6 +402,7 @@ export component AppWindow inherits Window {
                     contrast-changed(c) => { root.selected-clip-contrast-changed(c); }
                     saturation-changed(s) => { root.selected-clip-saturation-changed(s); }
                     transform-gesture-begin => { root.selected-clip-transform-gesture-begin(); }
+                    keyframe-interp-changed(ch, mode) => { root.selected-clip-keyframe-interp-changed(ch, mode); }
                 }
             }
 

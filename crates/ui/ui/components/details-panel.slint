@@ -1,6 +1,6 @@
 import { Palette } from "../styles/palette.slint";
 import { Theme } from "../styles/theme.slint";
-import { Slider } from "std-widgets.slint";
+import { ParamSlider } from "param-slider.slint";
 
 // Read-only metadata row (label left, value right).
 component InfoRow inherits Rectangle {
@@ -50,7 +50,7 @@ component NumberField inherits Rectangle {
     // Fired when a scrub/reset gesture starts (used to checkpoint undo once).
     callback pressed();
 
-    height: 30px;
+    height: 28px;
 
     HorizontalLayout {
         spacing: Theme.spacing-sm;
@@ -65,9 +65,9 @@ component NumberField inherits Rectangle {
 
         Rectangle {
             horizontal-stretch: 1;
-            height: 26px;
+            height: 24px;
             border-radius: Theme.radius-sm;
-            background: (fld.has-hover || fld.pressed) ? Palette.surface-2 : Palette.surface;
+            background: (fld.has-hover || fld.pressed) ? Palette.surface-2 : #181a1f;
             border-width: 1px;
             border-color: fld.pressed ? Palette.accent : Palette.border;
             animate border-color { duration: 100ms; }
@@ -144,7 +144,7 @@ component Switch inherits Rectangle {
     in property <string> label;
     in-out property <bool> checked;
     callback toggled(bool);
-    height: 30px;
+    height: 28px;
 
     HorizontalLayout {
         spacing: Theme.spacing-sm;
@@ -157,16 +157,16 @@ component Switch inherits Rectangle {
         }
         Rectangle { horizontal-stretch: 1; }
         Rectangle {
-            width: 34px; height: 18px;
+            width: 32px; height: 16px;
             y: (parent.height - self.height) / 2;
-            border-radius: 9px;
-            background: root.checked ? Palette.accent : Palette.surface-3;
+            border-radius: 8px;
+            background: root.checked ? Palette.accent : #25272e;
             border-width: 1px;
-            border-color: root.checked ? Palette.accent : Palette.border;
+            border-color: root.checked ? Palette.accent-2 : Palette.border;
             animate background { duration: 120ms; }
             Rectangle {
-                width: 12px; height: 12px;
-                border-radius: 6px;
+                width: 10px; height: 10px;
+                border-radius: 5px;
                 background: white;
                 x: root.checked ? parent.width - self.width - 3px : 3px;
                 y: (parent.height - self.height) / 2;
@@ -209,49 +209,6 @@ component KeyButton inherits Rectangle {
     }
 }
 
-// Visual slider for color adjustments (Brightness, Contrast, Saturation)
-component ColorSlider inherits Rectangle {
-    in property <string> label;
-    in-out property <float> value;
-    in property <float> minimum: 0.0;
-    in property <float> maximum: 2.0;
-    callback changed(float);
-
-    height: 30px;
-
-    HorizontalLayout {
-        spacing: Theme.spacing-sm;
-
-        Text {
-            text: root.label;
-            color: Palette.text-muted;
-            font-size: Theme.font-sm;
-            width: 66px;
-            vertical-alignment: center;
-        }
-
-        Slider {
-            minimum: root.minimum;
-            maximum: root.maximum;
-            value: root.value;
-            horizontal-stretch: 1;
-            changed(v) => {
-                root.value = v;
-                root.changed(v);
-            }
-        }
-
-        Text {
-            text: (Math.round(root.value * 100) / 100);
-            color: Palette.text;
-            font-size: Theme.font-sm;
-            width: 32px;
-            horizontal-alignment: right;
-            vertical-alignment: center;
-        }
-    }
-}
-
 // One tab in the Picture/Audio/Info selector.
 component TabItem inherits Rectangle {
     in property <string> label;
@@ -280,6 +237,65 @@ component TabItem inherits Rectangle {
     }
 }
 
+// Easing interpolation selector for keyframes (Hold, Linear, Bezier)
+component InterpSelector inherits Rectangle {
+    in property <string> active-interp;
+    callback changed(string);
+    height: 18px;
+    HorizontalLayout {
+        spacing: 4px;
+        alignment: start;
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.changed("hold"); }
+            Rectangle {
+                border-radius: 3px;
+                background: root.active-interp == "hold" ? Palette.accent : Palette.surface-2;
+                border-width: 1px;
+                border-color: Palette.border;
+                Text {
+                    text: "Hold";
+                    font-size: 9px;
+                    color: root.active-interp == "hold" ? Palette.text : Palette.text-muted;
+                    x: 4px; y: 2px;
+                }
+            }
+        }
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.changed("linear"); }
+            Rectangle {
+                border-radius: 3px;
+                background: root.active-interp == "linear" ? Palette.accent : Palette.surface-2;
+                border-width: 1px;
+                border-color: Palette.border;
+                Text {
+                    text: "Linear";
+                    font-size: 9px;
+                    color: root.active-interp == "linear" ? Palette.text : Palette.text-muted;
+                    x: 4px; y: 2px;
+                }
+            }
+        }
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.changed("bezier"); }
+            Rectangle {
+                border-radius: 3px;
+                background: root.active-interp == "bezier" ? Palette.accent : Palette.surface-2;
+                border-width: 1px;
+                border-color: Palette.border;
+                Text {
+                    text: "Bezier";
+                    font-size: 9px;
+                    color: root.active-interp == "bezier" ? Palette.text : Palette.text-muted;
+                    x: 4px; y: 2px;
+                }
+            }
+        }
+    }
+}
+
 export component DetailsPanel inherits Rectangle {
     in property <bool> has-selection;
     in property <string> selected-name;
@@ -302,6 +318,8 @@ export component DetailsPanel inherits Rectangle {
     in property <float> selected-brightness: 0.0;
     in property <float> selected-contrast: 1.0;
     in property <float> selected-saturation: 1.0;
+    in property <string> selected-opacity-interp: "linear";
+    in property <string> selected-rotation-interp: "linear";
 
     // Keyframe state per animatable channel (animated = has any key, key = key at playhead).
     in property <bool> selected-opacity-animated;
@@ -329,6 +347,7 @@ export component DetailsPanel inherits Rectangle {
     callback brightness-changed(float);
     callback contrast-changed(float);
     callback saturation-changed(float);
+    callback keyframe-interp-changed(int, string);
     // Fired once at the start of a scrub/drag so the bridge can checkpoint undo.
     callback transform-gesture-begin();
     // Toggle a keyframe at the current playhead for the given channel id.
@@ -512,6 +531,14 @@ export component DetailsPanel inherits Rectangle {
                         toggled => { root.keyframe-toggle(6); }
                     }
                 }
+                if root.selected-rotation-key : HorizontalLayout {
+                    padding-left: 70px;
+                    height: 22px;
+                    InterpSelector {
+                        active-interp: root.selected-rotation-interp;
+                        changed(mode) => { root.keyframe-interp-changed(6, mode); }
+                    }
+                }
                 HorizontalLayout {
                     spacing: 2px;
                     NumberField {
@@ -531,6 +558,14 @@ export component DetailsPanel inherits Rectangle {
                         toggled => { root.keyframe-toggle(0); }
                     }
                 }
+                if root.selected-opacity-key : HorizontalLayout {
+                    padding-left: 70px;
+                    height: 22px;
+                    InterpSelector {
+                        active-interp: root.selected-opacity-interp;
+                        changed(mode) => { root.keyframe-interp-changed(0, mode); }
+                    }
+                }
                 Switch {
                     label: "Flip H";
                     checked: root.selected-flip-h;
@@ -541,41 +576,49 @@ export component DetailsPanel inherits Rectangle {
                     checked: root.selected-flip-v;
                     toggled(m) => { root.transform-gesture-begin(); root.flip-v-changed(m); }
                 }
-                // Color Correction (GPU Shaders)
-                ColorSlider {
+                // Color correction
+                ParamSlider {
                     label: "Brightness";
                     value: root.selected-brightness;
                     minimum: -1.0;
                     maximum: 1.0;
-                    changed(v) => { root.transform-gesture-begin(); root.brightness-changed(v); }
+                    fill-origin: 0.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.brightness-changed(v); }
                 }
-                ColorSlider {
+                ParamSlider {
                     label: "Contrast";
                     value: root.selected-contrast;
                     minimum: 0.0;
                     maximum: 2.0;
-                    changed(v) => { root.transform-gesture-begin(); root.contrast-changed(v); }
+                    fill-origin: 1.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.contrast-changed(v); }
                 }
-                ColorSlider {
+                ParamSlider {
                     label: "Saturation";
                     value: root.selected-saturation;
                     minimum: 0.0;
                     maximum: 2.0;
-                    changed(v) => { root.transform-gesture-begin(); root.saturation-changed(v); }
+                    fill-origin: 1.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.saturation-changed(v); }
                 }
             }
 
             // ── Audio ──
             if root.active-tab == 1 : VerticalLayout {
                 spacing: 4px;
-                NumberField {
+                ParamSlider {
                     label: "Volume";
                     value: root.selected-volume;
-                    percent: true;
                     minimum: 0.0;
                     maximum: 2.0;
-                    step: 0.005;
-                    default-value: 1.0;
+                    show-percent: true;
+                    pressed => { root.transform-gesture-begin(); }
                     changed(v) => { root.volume-changed(v); }
                 }
                 Switch {

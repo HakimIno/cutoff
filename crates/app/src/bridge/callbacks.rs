@@ -550,6 +550,28 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let proj = state.project.clone();
+        let pv = state.preview.clone();
+        let undo = state.undo.clone();
+        window.on_selected_clip_keyframe_interp_changed(move |ch, mode| {
+            on_selected_clip_keyframe_interp_changed(
+                weak.clone(),
+                tx.clone(),
+                pl.clone(),
+                tracks.clone(),
+                proj.clone(),
+                pv.clone(),
+                undo.clone(),
+                ch,
+                mode.to_string(),
+            );
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
         let proj = state.project.clone();
         let tracks = state.tracks.clone();
         let aj = state.active_job.clone();
@@ -2009,6 +2031,24 @@ fn refresh_keyframe_flags(
     window.set_selected_position_y_key(k.position_y.has_key_near(rel_us, KEY_TOL_US));
     window.set_selected_rotation_animated(k.rotation_deg.is_animated());
     window.set_selected_rotation_key(k.rotation_deg.has_key_near(rel_us, KEY_TOL_US));
+
+    let opacity_interp = k.opacity.keyframe_interp_near(rel_us, KEY_TOL_US)
+        .map(|i| match i {
+            video_merger_core::domain::Interp::Hold => "hold",
+            video_merger_core::domain::Interp::Bezier => "bezier",
+            video_merger_core::domain::Interp::Linear => "linear",
+        })
+        .unwrap_or("linear");
+    window.set_selected_opacity_interp(slint::SharedString::from(opacity_interp));
+
+    let rotation_interp = k.rotation_deg.keyframe_interp_near(rel_us, KEY_TOL_US)
+        .map(|i| match i {
+            video_merger_core::domain::Interp::Hold => "hold",
+            video_merger_core::domain::Interp::Bezier => "bezier",
+            video_merger_core::domain::Interp::Linear => "linear",
+        })
+        .unwrap_or("linear");
+    window.set_selected_rotation_interp(slint::SharedString::from(rotation_interp));
 }
 
 /// Toggle a keyframe at the current playhead for `channel_id`: remove one if it
@@ -2039,6 +2079,37 @@ fn on_selected_clip_keyframe_toggle(
             } else {
                 track.upsert(rel_us, value, KEY_TOL_US);
             }
+        }
+    }
+    sync_preview(&playlist, &tracks, &project, &cmd_tx);
+    refresh_keyframe_flags(&window, &playlist, &project, &preview);
+}
+
+fn on_selected_clip_keyframe_interp_changed(
+    weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
+    project: super::SharedProject,
+    preview: SharedPreview,
+    undo: SharedUndo,
+    channel_id: i32,
+    mode: String,
+) {
+    let Some(window) = weak.upgrade() else { return; };
+    let Ok(uuid) = Uuid::parse_str(window.get_selected_id().as_str()) else { return; };
+    let Some(ch) = TransformChannel::from_id(channel_id) else { return; };
+    let rel_us = clip_rel_us(&playlist, &project, &preview, uuid);
+    let interp = match mode.as_str() {
+        "hold" => video_merger_core::domain::Interp::Hold,
+        "bezier" => video_merger_core::domain::Interp::Bezier,
+        _ => video_merger_core::domain::Interp::Linear,
+    };
+    {
+        let mut pl = playlist.lock().expect("playlist mutex poisoned");
+        checkpoint(&undo, &pl);
+        if let Some(c) = pl.clips_mut().iter_mut().find(|c| c.id == uuid) {
+            c.transform_keys.channel_mut(ch).set_interp_near(rel_us, interp, KEY_TOL_US);
         }
     }
     sync_preview(&playlist, &tracks, &project, &cmd_tx);

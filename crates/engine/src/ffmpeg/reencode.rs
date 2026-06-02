@@ -297,6 +297,15 @@ fn anim_expr(track: &AnimatedF32, start_secs: f64) -> String {
                     b.value - a.value,
                 )
             }
+            Interp::Bezier => {
+                let span = (tb - ta).max(1e-6);
+                let t_norm = format!("(({tt}-{ta:.6})/{span:.6})");
+                format!(
+                    "({:.4}+({:.4})*({t_norm}*{t_norm}*(3.0-2.0*{t_norm})))",
+                    a.value,
+                    b.value - a.value,
+                )
+            }
         };
         // For t < tb use this segment, else fall through to the rest.
         expr = format!("if(lt({tt},{tb:.6}),{seg},{expr})");

@@ -21,6 +21,8 @@ pub enum Interp {
     Hold,
     /// Straight line to the next keyframe's value.
     Linear,
+    /// Bezier curve interpolation.
+    Bezier,
 }
 
 impl Default for Interp {
@@ -37,6 +39,67 @@ pub struct Keyframe {
     pub value: f32,
     #[serde(default)]
     pub interp: Interp,
+    /// Bezier control point 1 X coordinate (0.0 to 1.0)
+    #[serde(default = "default_cp_x1")]
+    pub cp_x1: f32,
+    /// Bezier control point 1 Y coordinate (0.0 to 1.0)
+    #[serde(default = "default_cp_y1")]
+    pub cp_y1: f32,
+    /// Bezier control point 2 X coordinate (0.0 to 1.0)
+    #[serde(default = "default_cp_x2")]
+    pub cp_x2: f32,
+    /// Bezier control point 2 Y coordinate (0.0 to 1.0)
+    #[serde(default = "default_cp_y2")]
+    pub cp_y2: f32,
+}
+
+fn default_cp_x1() -> f32 { 0.25 }
+fn default_cp_y1() -> f32 { 0.0 }
+fn default_cp_x2() -> f32 { 0.75 }
+fn default_cp_y2() -> f32 { 1.0 }
+
+impl Default for Keyframe {
+    fn default() -> Self {
+        Self {
+            time_us: 0,
+            value: 0.0,
+            interp: Interp::default(),
+            cp_x1: default_cp_x1(),
+            cp_y1: default_cp_y1(),
+            cp_x2: default_cp_x2(),
+            cp_y2: default_cp_y2(),
+        }
+    }
+}
+
+fn sample_bezier(u: f32, p1: f32, p2: f32) -> f32 {
+    let u_sq = u * u;
+    let one_minus_u = 1.0 - u;
+    let one_minus_u_sq = one_minus_u * one_minus_u;
+    3.0 * one_minus_u_sq * u * p1 + 3.0 * one_minus_u * u_sq * p2 + u_sq * u
+}
+
+fn sample_bezier_derivative(u: f32, p1: f32, p2: f32) -> f32 {
+    let u_sq = u * u;
+    (3.0 - 12.0 * u + 9.0 * u_sq) * p1 + (6.0 * u - 9.0 * u_sq) * p2 + 3.0 * u_sq
+}
+
+fn solve_bezier_u(t: f32, x1: f32, x2: f32) -> f32 {
+    let mut u = t;
+    for _ in 0..8 {
+        let x = sample_bezier(u, x1, x2);
+        let dx = sample_bezier_derivative(u, x1, x2);
+        if dx.abs() < 1e-6 {
+            break;
+        }
+        u -= (x - t) / dx;
+    }
+    u.clamp(0.0, 1.0)
+}
+
+fn eval_bezier(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
+    let u = solve_bezier_u(t, x1, x2);
+    sample_bezier(u, y1, y2)
 }
 
 /// An animatable scalar: a (time-sorted) list of keyframes. Empty = not
@@ -80,6 +143,12 @@ impl AnimatedF32 {
                                 let f = (t_us - a.time_us) as f32 / span;
                                 a.value + (b.value - a.value) * f
                             }
+                            Interp::Bezier => {
+                                let span = (b.time_us - a.time_us).max(1) as f32;
+                                let f = (t_us - a.time_us) as f32 / span;
+                                let ratio = eval_bezier(f, a.cp_x1, a.cp_y1, a.cp_x2, a.cp_y2);
+                                a.value + (b.value - a.value) * ratio
+                            }
                         };
                     }
                 }
@@ -99,7 +168,12 @@ impl AnimatedF32 {
             k.value = value;
             return;
         }
-        self.keys.push(Keyframe { time_us, value, interp: Interp::default() });
+        self.keys.push(Keyframe {
+            time_us,
+            value,
+            interp: Interp::default(),
+            ..Default::default()
+        });
         self.keys.sort_by_key(|k| k.time_us);
     }
 
@@ -112,6 +186,16 @@ impl AnimatedF32 {
 
     pub fn has_key_near(&self, time_us: i64, tol_us: i64) -> bool {
         self.keys.iter().any(|k| (k.time_us - time_us).abs() <= tol_us)
+    }
+
+    pub fn keyframe_interp_near(&self, time_us: i64, tol_us: i64) -> Option<Interp> {
+        self.keys.iter().find(|k| (k.time_us - time_us).abs() <= tol_us).map(|k| k.interp)
+    }
+
+    pub fn set_interp_near(&mut self, time_us: i64, interp: Interp, tol_us: i64) {
+        if let Some(k) = self.keys.iter_mut().find(|k| (k.time_us - time_us).abs() <= tol_us) {
+            k.interp = interp;
+        }
     }
 }
 
@@ -353,11 +437,25 @@ mod tests {
         // Re-create with hold on first key.
         let a = AnimatedF32 {
             keys: vec![
-                Keyframe { time_us: 0, value: 0.0, interp: Interp::Hold },
-                Keyframe { time_us: 1_000_000, value: 1.0, interp: Interp::Linear },
+                Keyframe { time_us: 0, value: 0.0, interp: Interp::Hold, ..Default::default() },
+                Keyframe { time_us: 1_000_000, value: 1.0, interp: Interp::Linear, ..Default::default() },
             ],
         };
         assert_eq!(a.eval(500_000, 9.9), 0.0, "hold keeps the earlier value");
+    }
+
+    #[test]
+    fn bezier_interpolation_evaluates_smoothly() {
+        let mut a = AnimatedF32::default();
+        a.upsert(0, 0.0, 0);
+        a.upsert(1_000_000, 100.0, 0);
+        a.set_interp_near(0, Interp::Bezier, 0);
+        let mid = a.eval(500_000, 0.0);
+        assert!((mid - 50.0).abs() < 1e-5, "midpoint should be 50.0, got {}", mid);
+        let early = a.eval(250_000, 0.0);
+        assert!(early < 25.0, "ease-in should be slower than linear 25.0, got {}", early);
+        let late = a.eval(750_000, 0.0);
+        assert!(late > 75.0, "ease-out should be faster than linear 75.0, got {}", late);
     }
 
     #[test]

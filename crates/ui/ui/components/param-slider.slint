@@ -1,0 +1,127 @@
+import { Palette } from "../styles/palette.slint";
+import { Theme } from "../styles/theme.slint";
+
+/// Label + horizontal slider + value. Use `fill-origin` for the neutral point on the track
+/// (e.g. 0 for brightness −1…1, 1 for contrast/saturation 0…2).
+export component ParamSlider inherits Rectangle {
+    in property <string> label;
+    in-out property <float> value;
+    in property <float> minimum: 0.0;
+    in property <float> maximum: 1.0;
+    in property <float> fill-origin: 0.0;
+    in property <int> decimal-places: 2;
+    in property <bool> show-percent: false;
+    in property <length> label-width: 66px;
+    in property <length> value-width: 34px;
+    callback changed(float);
+    callback pressed();
+
+    property <float> span: max(root.maximum - root.minimum, 0.0001);
+    property <float> value-frac: clamp((root.value - root.minimum) / root.span, 0, 1);
+    property <float> origin-frac: clamp((root.fill-origin - root.minimum) / root.span, 0, 1);
+    property <float> fill-start: min(root.origin-frac, root.value-frac);
+    property <float> fill-end: max(root.origin-frac, root.value-frac);
+    property <string> value-text:
+        root.show-percent
+            ? Math.round(root.value * 100) + "%"
+            : (root.decimal-places <= 0
+                ? Math.round(root.value)
+                : (root.decimal-places == 1
+                    ? (Math.round(root.value * 10) / 10)
+                    : (Math.round(root.value * 100) / 100)));
+
+    height: 28px;
+
+    HorizontalLayout {
+        spacing: Theme.spacing-sm;
+        alignment: center;
+
+        Text {
+            text: root.label;
+            color: Palette.text-muted;
+            font-size: Theme.font-sm;
+            width: root.label-width;
+            vertical-alignment: center;
+        }
+
+        slider-host := Rectangle {
+            horizontal-stretch: 1;
+            height: 22px;
+            min-width: 48px;
+
+            property <length> track-y: (parent.height - 4px) / 2;
+            property <length> thumb-x: root.value-frac * parent.width;
+
+            Rectangle {
+                y: parent.track-y;
+                width: 100%;
+                height: 4px;
+                border-radius: 2px;
+                background: #25272e;
+                border-width: 1px;
+                border-color: Palette.border;
+
+                Rectangle {
+                    x: root.fill-start * parent.width;
+                    width: (root.fill-end - root.fill-start) * parent.width;
+                    height: 100%;
+                    border-radius: 2px;
+                    background: Palette.accent-2;
+                }
+            }
+
+            Rectangle {
+                width: 18px;
+                height: 18px;
+                border-radius: 9px;
+                background: Palette.accent-glow;
+                x: parent.thumb-x - self.width / 2;
+                y: (parent.height - self.height) / 2;
+            }
+
+            Rectangle {
+                width: 10px;
+                height: 10px;
+                border-radius: 5px;
+                background: Palette.accent-2;
+                border-width: 1px;
+                border-color: #ffffff55;
+                x: parent.thumb-x - self.width / 2;
+                y: (parent.height - self.height) / 2;
+            }
+
+            ta := TouchArea {
+                mouse-cursor: pointer;
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down) {
+                        root.pressed();
+                    }
+                }
+                clicked => {
+                    if (self.width > 0px) {
+                        let nv = root.minimum + (self.pressed-x / self.width) * root.span;
+                        root.value = clamp(nv, root.minimum, root.maximum);
+                        root.changed(root.value);
+                    }
+                }
+                moved => {
+                    if (self.pressed && self.width > 0px) {
+                        let nv = root.minimum + (self.mouse-x / self.width) * root.span;
+                        root.value = clamp(nv, root.minimum, root.maximum);
+                        root.changed(root.value);
+                    }
+                }
+            }
+        }
+
+        Text {
+            text: root.value-text;
+            color: Palette.text;
+            font-size: Theme.font-sm;
+            font-weight: 500;
+            width: root.value-width;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+    }
+}
