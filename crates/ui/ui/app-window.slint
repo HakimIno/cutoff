@@ -44,6 +44,16 @@ export component AppWindow inherits Window {
     in property <float> selected-rotation: 0.0;
     in property <bool> selected-flip-h: false;
     in property <bool> selected-flip-v: false;
+    in property <bool> selected-opacity-animated;
+    in property <bool> selected-opacity-key;
+    in property <bool> selected-scale-animated;
+    in property <bool> selected-scale-key;
+    in property <bool> selected-position-x-animated;
+    in property <bool> selected-position-x-key;
+    in property <bool> selected-position-y-animated;
+    in property <bool> selected-position-y-key;
+    in property <bool> selected-rotation-animated;
+    in property <bool> selected-rotation-key;
     in property <int> project-width: 1920;
     in property <int> project-height: 1080;
     in property <int> selected-width: 1920;
@@ -132,6 +142,7 @@ export component AppWindow inherits Window {
     callback selected-clip-flip-h-changed(bool);
     callback selected-clip-flip-v-changed(bool);
     callback selected-clip-transform-gesture-begin();
+    callback selected-clip-keyframe-toggle(int);
 
     in property <bool> master-muted;
 
@@ -351,6 +362,17 @@ export component AppWindow inherits Window {
                     selected-rotation: root.selected-rotation;
                     selected-flip-h: root.selected-flip-h;
                     selected-flip-v: root.selected-flip-v;
+                    selected-opacity-animated: root.selected-opacity-animated;
+                    selected-opacity-key: root.selected-opacity-key;
+                    selected-scale-animated: root.selected-scale-animated;
+                    selected-scale-key: root.selected-scale-key;
+                    selected-position-x-animated: root.selected-position-x-animated;
+                    selected-position-x-key: root.selected-position-x-key;
+                    selected-position-y-animated: root.selected-position-y-animated;
+                    selected-position-y-key: root.selected-position-y-key;
+                    selected-rotation-animated: root.selected-rotation-animated;
+                    selected-rotation-key: root.selected-rotation-key;
+                    keyframe-toggle(ch) => { root.selected-clip-keyframe-toggle(ch); }
                     volume-changed(v) => { root.selected-clip-volume-changed(v); }
                     muted-changed(m) => { root.selected-clip-muted-changed(m); }
                     opacity-changed(o) => { root.selected-clip-opacity-changed(o); }

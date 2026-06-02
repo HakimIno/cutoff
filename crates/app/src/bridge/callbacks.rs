@@ -4,7 +4,9 @@ use std::time::Duration;
 use slint::{ComponentHandle, SharedString, Weak};
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use video_merger_core::domain::{Clip, ContainerFormat, ExportSpec, Playlist, Quality};
+use video_merger_core::domain::{
+    Clip, ContainerFormat, ExportSpec, Playlist, Quality, TransformChannel,
+};
 use video_merger_core::services::{self, TrimSide};
 use video_merger_persistence::Project;
 use video_merger_ui::AppWindow;
@@ -18,6 +20,10 @@ use super::{
 
 const DROP_TARGET_NONE: i32 = -1;
 const DRAG_ID_NONE: &str = "";
+
+/// Snap tolerance for "is there a keyframe at the playhead": ~20ms, roughly a
+/// frame, so a click lands on an existing key instead of stacking a new one.
+const KEY_TOL_US: i64 = 20_000;
 
 pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeState) {
     {
@@ -81,8 +87,9 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let pv = state.preview.clone();
+        let proj = state.project.clone();
         window.on_seek_fraction(move |f| {
-            on_seek_fraction(weak.clone(), tx.clone(), pl.clone(), pv.clone(), f)
+            on_seek_fraction(weak.clone(), tx.clone(), pl.clone(), pv.clone(), proj.clone(), f)
         });
     }
     {
@@ -501,6 +508,18 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let proj = state.project.clone();
+        let pv = state.preview.clone();
+        let undo = state.undo.clone();
+        window.on_selected_clip_keyframe_toggle(move |ch| {
+            on_selected_clip_keyframe_toggle(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), proj.clone(), pv.clone(), undo.clone(), ch);
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
         let proj = state.project.clone();
         let tracks = state.tracks.clone();
         let aj = state.active_job.clone();
@@ -831,6 +850,7 @@ fn select_and_open(
 
     if let Some(window) = weak.upgrade() {
         refresh_tracks_ui(&window, &playlist, tracks, project);
+        refresh_keyframe_flags(&window, &playlist, project, &preview);
     }
     sync_preview(&playlist, tracks, project, &cmd_tx);
 
@@ -876,6 +896,7 @@ fn on_seek_fraction(
     cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
     preview: SharedPreview,
+    project: super::SharedProject,
     fraction: f32,
 ) {
     let total_us = {
@@ -895,6 +916,8 @@ fn on_seek_fraction(
         window.set_playhead_text(SharedString::from(
             crate::view_model::timeline_vm::format_us(pts_us),
         ));
+        // Update keyframe diamonds to reflect the new playhead position.
+        refresh_keyframe_flags(&window, &playlist, &project, &preview);
     }
 }
 
@@ -1879,6 +1902,111 @@ fn on_selected_clip_transform_bool(
         }
         sync_preview(&playlist, &tracks, &project, &cmd_tx);
     }
+}
+
+/// The clip's *static* field value for a channel — captured as the value of a
+/// freshly-added keyframe (it's what the NumberField shows).
+fn channel_static_value(clip: &Clip, ch: TransformChannel) -> f32 {
+    match ch {
+        TransformChannel::Opacity => clip.opacity,
+        TransformChannel::Scale => clip.scale,
+        TransformChannel::ScaleX => clip.scale_x,
+        TransformChannel::ScaleY => clip.scale_y,
+        TransformChannel::PositionX => clip.position_x as f32,
+        TransformChannel::PositionY => clip.position_y as f32,
+        TransformChannel::Rotation => clip.rotation_deg,
+    }
+}
+
+/// Clip-relative time (since the clip's visible start) at the current playhead,
+/// clamped to the clip's effective duration. Uses the project placement
+/// (`start_us`) the compositor renders with, falling back to the flat-playlist
+/// offset if the project isn't populated yet.
+fn clip_rel_us(
+    playlist: &SharedPlaylist,
+    project: &super::SharedProject,
+    preview: &SharedPreview,
+    uuid: Uuid,
+) -> i64 {
+    let playhead = preview.lock().map(|p| p.playhead_us).unwrap_or(0);
+    let start_from_project = project.lock().ok().and_then(|p| {
+        p.find_clip(uuid).map(|(ti, ci)| p.tracks[ti].clips[ci].start_us)
+    });
+    let (start, dur) = {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        let dur = pl
+            .clips()
+            .iter()
+            .find(|c| c.id == uuid)
+            .map(|c| c.effective_duration_us())
+            .unwrap_or(0);
+        let start = start_from_project.unwrap_or_else(|| {
+            timeline_view::selected_clip_window(&pl, Some(uuid)).map(|(o, _)| o).unwrap_or(0)
+        });
+        (start, dur)
+    };
+    (playhead - start).clamp(0, dur.max(0))
+}
+
+/// Push per-channel keyframe state (animated + key-at-playhead) to the window
+/// so the diamond toggles render correctly. Call after selection, seek, or a
+/// keyframe edit.
+fn refresh_keyframe_flags(
+    window: &AppWindow,
+    playlist: &SharedPlaylist,
+    project: &super::SharedProject,
+    preview: &SharedPreview,
+) {
+    let Ok(uuid) = Uuid::parse_str(window.get_selected_id().as_str()) else { return; };
+    let rel_us = clip_rel_us(playlist, project, preview, uuid);
+    let pl = playlist.lock().expect("playlist mutex poisoned");
+    let Some(c) = pl.clips().iter().find(|c| c.id == uuid) else { return; };
+    let k = &c.transform_keys;
+
+    window.set_selected_opacity_animated(k.opacity.is_animated());
+    window.set_selected_opacity_key(k.opacity.has_key_near(rel_us, KEY_TOL_US));
+    window.set_selected_scale_animated(k.scale.is_animated());
+    window.set_selected_scale_key(k.scale.has_key_near(rel_us, KEY_TOL_US));
+    window.set_selected_position_x_animated(k.position_x.is_animated());
+    window.set_selected_position_x_key(k.position_x.has_key_near(rel_us, KEY_TOL_US));
+    window.set_selected_position_y_animated(k.position_y.is_animated());
+    window.set_selected_position_y_key(k.position_y.has_key_near(rel_us, KEY_TOL_US));
+    window.set_selected_rotation_animated(k.rotation_deg.is_animated());
+    window.set_selected_rotation_key(k.rotation_deg.has_key_near(rel_us, KEY_TOL_US));
+}
+
+/// Toggle a keyframe at the current playhead for `channel_id`: remove one if it
+/// sits within tolerance, otherwise add one capturing the current value.
+#[allow(clippy::too_many_arguments)]
+fn on_selected_clip_keyframe_toggle(
+    weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
+    project: super::SharedProject,
+    preview: SharedPreview,
+    undo: SharedUndo,
+    channel_id: i32,
+) {
+    let Some(window) = weak.upgrade() else { return; };
+    let Ok(uuid) = Uuid::parse_str(window.get_selected_id().as_str()) else { return; };
+    let Some(ch) = TransformChannel::from_id(channel_id) else { return; };
+    let rel_us = clip_rel_us(&playlist, &project, &preview, uuid);
+    {
+        let mut pl = playlist.lock().expect("playlist mutex poisoned");
+        checkpoint(&undo, &pl);
+        if let Some(c) = pl.clips_mut().iter_mut().find(|c| c.id == uuid) {
+            let value = channel_static_value(c, ch);
+            let track = c.transform_keys.channel_mut(ch);
+            if track.has_key_near(rel_us, KEY_TOL_US) {
+                track.remove_near(rel_us, KEY_TOL_US);
+            } else {
+                track.upsert(rel_us, value, KEY_TOL_US);
+            }
+        }
+    }
+    sync_preview(&playlist, &tracks, &project, &cmd_tx);
+    refresh_keyframe_flags(&window, &playlist, &project, &preview);
 }
 
 fn on_selected_clip_muted_changed(

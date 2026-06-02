@@ -16,7 +16,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use video_merger_core::domain::{ExportSpec, Project, ResolvedTransform, Track, TrackClip, TrackKind};
+use video_merger_core::domain::{
+    ExportSpec, Project, ResolvedTransform, Track, TrackClip, TrackKind, TransformKeys,
+};
 use video_merger_core::services::{MergeInput, MergePlan, MergeStrategy};
 
 /// A single time-segment where a clip is active on a track.
@@ -40,9 +42,14 @@ pub struct RenderSegment {
     pub track_idx: usize,
     /// Whether this track is muted.
     pub muted: bool,
-    /// Resolved transform (static for Phase 1). Carries opacity, per-axis
-    /// scale, rotation, flips and crop so the filter graph matches preview.
+    /// Resolved transform sampled at the clip's start (rel=0). Carries opacity,
+    /// per-axis scale, rotation, flips and crop. Used directly for non-animated
+    /// clips and as the constant for non-animated channels of animated clips.
     pub transform: ResolvedTransform,
+    /// Per-channel keyframe tracks (clip-relative time). When a channel is
+    /// animated the filter graph emits a time-varying expression instead of the
+    /// constant in `transform`.
+    pub transform_keys: TransformKeys,
 }
 
 /// Complete render plan for multi-track export.
@@ -104,9 +111,8 @@ pub fn build_render_plan(project: &Project) -> RenderPlan {
                 trim_out_us: tc.clip.trim_out_us(),
                 track_idx,
                 muted: track.muted,
-                // Static resolve (Phase 1). Keyframe animation will sample at
-                // multiple times and emit time-varying filter expressions.
                 transform: tc.clip.resolved_transform(0),
+                transform_keys: tc.clip.transform_keys.clone(),
             };
 
             match track.kind {

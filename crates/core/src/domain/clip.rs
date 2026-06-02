@@ -4,7 +4,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use super::codec::CodecProfile;
-use super::transform::{Crop, ResolvedTransform};
+use super::transform::{Crop, ResolvedTransform, TransformKeys};
 
 pub type ClipId = Uuid;
 
@@ -67,6 +67,9 @@ pub struct Clip {
     /// Optional source-space crop applied before scaling.
     #[serde(default)]
     pub crop: Option<Crop>,
+    /// Per-channel keyframe animation. Empty by default → static transform.
+    #[serde(default)]
+    pub transform_keys: TransformKeys,
 }
 
 fn default_volume() -> f32 {
@@ -105,23 +108,25 @@ impl Clip {
             flip_h: false,
             flip_v: false,
             crop: None,
+            transform_keys: TransformKeys::default(),
         }
     }
 
-    /// Resolve this clip's transform at `local_us` (microseconds into the
-    /// clip's own timeline, i.e. `timeline_t - start + trim_in`).
+    /// Resolve this clip's transform at `rel_us` — microseconds since the
+    /// clip's *visible start* on the timeline (`timeline_t - start_us`), the
+    /// domain keyframes are authored in.
     ///
-    /// Phase 1: returns the static fields. Phase 2 will evaluate keyframe
-    /// tracks here; `_local_us` is already threaded through every renderer so
-    /// animation will require no further plumbing.
-    pub fn resolved_transform(&self, _local_us: i64) -> ResolvedTransform {
+    /// Each channel evaluates its keyframe track, falling back to the static
+    /// field when that channel has no keyframes. Flip and crop are not animated.
+    pub fn resolved_transform(&self, rel_us: i64) -> ResolvedTransform {
+        let k = &self.transform_keys;
         ResolvedTransform {
-            opacity: self.opacity,
-            scale_x: self.scale * self.scale_x,
-            scale_y: self.scale * self.scale_y,
-            position_x: self.position_x,
-            position_y: self.position_y,
-            rotation_deg: self.rotation_deg,
+            opacity: k.opacity.eval(rel_us, self.opacity),
+            scale_x: k.scale.eval(rel_us, self.scale) * k.scale_x.eval(rel_us, self.scale_x),
+            scale_y: k.scale.eval(rel_us, self.scale) * k.scale_y.eval(rel_us, self.scale_y),
+            position_x: k.position_x.eval(rel_us, self.position_x as f32).round() as i32,
+            position_y: k.position_y.eval(rel_us, self.position_y as f32).round() as i32,
+            rotation_deg: k.rotation_deg.eval(rel_us, self.rotation_deg),
             flip_h: self.flip_h,
             flip_v: self.flip_v,
             crop: self.crop.filter(|c| !c.is_noop()),

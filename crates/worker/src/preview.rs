@@ -1099,11 +1099,14 @@ fn render_timeline_frame(
 
     // Fast path: one identity-transform clip that fills the canvas → forward
     // the decoder's RGBA Arc directly (no canvas fill, no sampling, no composite).
+    // `rel_us` (since the clip's visible start) drives the transform/keyframes;
+    // `src_us` (with trim_in) drives the decoder seek.
     if let [(_, tc)] = active.as_slice() {
-        let local_us = t_us - tc.start_us + tc.clip.trim_in_us();
-        if tc.clip.resolved_transform(local_us).is_identity() {
+        let rel_us = t_us - tc.start_us;
+        let src_us = rel_us + tc.clip.trim_in_us();
+        if tc.clip.resolved_transform(rel_us).is_identity() {
             if let Some(state) = decoder_for(decoders, tc, preview_scale) {
-                if let Some(frame) = state.get_frame_at(local_us) {
+                if let Some(frame) = state.get_frame_at(src_us) {
                     if frame.width == width && frame.height == height {
                         return frame.rgba;
                     }
@@ -1124,11 +1127,12 @@ fn render_timeline_frame(
     }
 
     for (_, tc) in active {
-        let local_us = t_us - tc.start_us + tc.clip.trim_in_us();
-        let xf = tc.clip.resolved_transform(local_us);
+        let rel_us = t_us - tc.start_us;
+        let src_us = rel_us + tc.clip.trim_in_us();
+        let xf = tc.clip.resolved_transform(rel_us);
 
         let frame = match decoder_for(decoders, tc, preview_scale) {
-            Some(state) => match state.get_frame_at(local_us) {
+            Some(state) => match state.get_frame_at(src_us) {
                 Some(f) => f,
                 None => continue,
             },

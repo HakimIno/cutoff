@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 
 use tokio_util::sync::CancellationToken;
-use video_merger_core::domain::{CodecProfile, Quality};
+use video_merger_core::domain::{AnimatedF32, CodecProfile, Interp, Quality};
 use video_merger_core::services::{MergePlan, MergeStrategy};
 
 use crate::composite::RenderPlan;
@@ -269,6 +269,43 @@ fn build_multitrack_args(
 /// 2. For each video segment, normalize (scale+pad) and overlay at the
 ///    correct timeline position using `setpts`/`enable` timing.
 /// 3. For audio, normalize and mix with `amix`.
+/// Build an ffmpeg expression (function of `t`, timeline seconds) that
+/// reproduces a keyframe track as piecewise-linear/hold interpolation. The
+/// clip-relative clock is `(t - start_secs)`; before the first / after the last
+/// key the value is held. Caller guarantees the track is animated.
+fn anim_expr(track: &AnimatedF32, start_secs: f64) -> String {
+    let keys = track.keys();
+    debug_assert!(!keys.is_empty());
+    if keys.len() == 1 {
+        return format!("{:.4}", keys[0].value);
+    }
+    // Clip-relative time in seconds.
+    let tt = format!("(t-{start_secs:.6})");
+    // Build outwards from the tail: default is the last key's value (held).
+    let mut expr = format!("{:.4}", keys[keys.len() - 1].value);
+    for w in keys.windows(2).rev() {
+        let (a, b) = (w[0], w[1]);
+        let ta = a.time_us as f64 / 1_000_000.0;
+        let tb = b.time_us as f64 / 1_000_000.0;
+        let seg = match a.interp {
+            Interp::Hold => format!("{:.4}", a.value),
+            Interp::Linear => {
+                let span = (tb - ta).max(1e-6);
+                format!(
+                    "({:.4}+({:.4})*(({tt}-{ta:.6})/{span:.6}))",
+                    a.value,
+                    b.value - a.value,
+                )
+            }
+        };
+        // For t < tb use this segment, else fall through to the rest.
+        expr = format!("if(lt({tt},{tb:.6}),{seg},{expr})");
+    }
+    // Before the first key → hold the first value.
+    let t0 = keys[0].time_us as f64 / 1_000_000.0;
+    format!("if(lt({tt},{t0:.6}),{:.4},{expr})", keys[0].value)
+}
+
 fn build_multitrack_filter(
     render: &RenderPlan,
     w: u32,
@@ -342,13 +379,30 @@ fn build_multitrack_filter(
 
         let _ = write!(filter, "[{i}:v]{chain}");
 
-        // Center the (possibly rotated) box on the canvas + position offset.
-        let overlay_x = seg.transform.position_x + (w as i32 - final_w) / 2;
-        let overlay_y = seg.transform.position_y + (h as i32 - final_h) / 2;
+        // Centering offset for the (possibly rotated) box on the canvas.
+        let center_x = (w as i32 - final_w) / 2;
+        let center_y = (h as i32 - final_h) / 2;
         let out_label = format!("cv{seg_i}");
+
+        // Position keyframes → time-varying overlay x/y expressions; otherwise
+        // a constant. `overlay` runs in *timeline* time, so the clip-relative
+        // clock is `(t - start_secs)`. (Scale/rotation/opacity keyframes are
+        // not yet exported — they animate in preview only.)
+        let kx = &seg.transform_keys.position_x;
+        let ky = &seg.transform_keys.position_y;
+        let x_arg = if kx.is_animated() {
+            format!("'{}+({})'", center_x, anim_expr(kx, delay_secs))
+        } else {
+            format!("{}", seg.transform.position_x + center_x)
+        };
+        let y_arg = if ky.is_animated() {
+            format!("'{}+({})'", center_y, anim_expr(ky, delay_secs))
+        } else {
+            format!("{}", seg.transform.position_y + center_y)
+        };
         let _ = write!(
             filter,
-            "[{last_label}][ov{seg_i}]overlay={overlay_x}:{overlay_y}:enable='between(t,{enable_start:.6},{enable_end:.6})'[{out_label}];"
+            "[{last_label}][ov{seg_i}]overlay=x={x_arg}:y={y_arg}:enable='between(t,{enable_start:.6},{enable_end:.6})'[{out_label}];"
         );
         last_label = out_label;
     }
@@ -523,5 +577,48 @@ mod tests {
         assert!(filter.contains("rotate="), "rotation should emit a rotate filter");
         assert!(filter.contains("hflip"), "flip_h should emit hflip");
         assert!(filter.contains("crop=in_w-10:in_h-20:10:20"), "crop should emit a crop filter");
+    }
+
+    #[test]
+    fn position_keyframes_emit_overlay_expression() {
+        use crate::composite::build_render_plan;
+        use video_merger_core::domain::{
+            Clip, CodecProfile, MediaInfo, Project, Resolution, TrackClip,
+        };
+        use std::path::PathBuf;
+        use std::time::Duration;
+
+        let mut proj = Project::with_default_tracks();
+        let v1 = proj.track_index_by_name("V1").unwrap();
+        let mut clip = Clip::new(
+            PathBuf::from("/tmp/base.mp4"),
+            MediaInfo {
+                duration: Duration::from_secs(10),
+                profile: CodecProfile {
+                    video_codec: "h264".into(),
+                    audio_codec: "aac".into(),
+                    resolution: Resolution { width: 1920, height: 1080 },
+                    frame_rate_mhz: 30_000,
+                    pixel_format: "yuv420p".into(),
+                },
+            },
+        );
+        // Pan from x=0 to x=500 over the first second.
+        clip.transform_keys.position_x.upsert(0, 0.0, 0);
+        clip.transform_keys.position_x.upsert(1_000_000, 500.0, 0);
+        proj.tracks[v1].clips.push(TrackClip { clip, start_us: 0 });
+
+        let plan = build_render_plan(&proj);
+        let filter = build_multitrack_filter(&plan, 1920, 1080, "30.000");
+        // Overlay x must be a time-dependent expression, not a constant.
+        assert!(filter.contains("overlay=x='"), "animated x should be an expression");
+        assert!(filter.contains("if(lt((t-"), "expression should branch on clip-relative time");
+    }
+
+    #[test]
+    fn anim_expr_single_key_is_constant() {
+        let mut track = video_merger_core::domain::AnimatedF32::default();
+        track.upsert(0, 42.0, 0);
+        assert_eq!(anim_expr(&track, 0.0), "42.0000");
     }
 }
