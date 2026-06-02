@@ -46,6 +46,8 @@ component NumberField inherits Rectangle {
     in property <bool> integer: false;      // display/emit whole numbers
     in property <string> suffix: "";
     callback changed(float);
+    // Fired when a scrub/reset gesture starts (used to checkpoint undo once).
+    callback pressed();
 
     height: 30px;
 
@@ -92,6 +94,7 @@ component NumberField inherits Rectangle {
                 pointer-event(e) => {
                     if (e.kind == PointerEventKind.down) {
                         self.start-val = root.value;
+                        root.pressed();
                     }
                 }
                 moved => {
@@ -112,6 +115,7 @@ component NumberField inherits Rectangle {
                 visible: fld.has-hover || self.has-hover;
                 mouse-cursor: pointer;
                 clicked => {
+                    root.pressed();
                     root.value = root.default-value;
                     root.changed(root.default-value);
                 }
@@ -220,6 +224,11 @@ export component DetailsPanel inherits Rectangle {
     in property <float> selected-scale: 1.0;
     in property <int> selected-position-x: 0;
     in property <int> selected-position-y: 0;
+    in property <float> selected-scale-x: 1.0;
+    in property <float> selected-scale-y: 1.0;
+    in property <float> selected-rotation: 0.0;
+    in property <bool> selected-flip-h: false;
+    in property <bool> selected-flip-v: false;
 
     callback volume-changed(float);
     callback muted-changed(bool);
@@ -227,6 +236,13 @@ export component DetailsPanel inherits Rectangle {
     callback scale-changed(float);
     callback position-x-changed(int);
     callback position-y-changed(int);
+    callback scale-x-changed(float);
+    callback scale-y-changed(float);
+    callback rotation-changed(float);
+    callback flip-h-changed(bool);
+    callback flip-v-changed(bool);
+    // Fired once at the start of a scrub/drag so the bridge can checkpoint undo.
+    callback transform-gesture-begin();
 
     property <int> active-tab: 0;
 
@@ -317,6 +333,7 @@ export component DetailsPanel inherits Rectangle {
                     step: 1.0;
                     suffix: "";
                     default-value: 0;
+                    pressed => { root.transform-gesture-begin(); }
                     changed(v) => { root.position-x-changed(Math.round(v)); }
                 }
                 NumberField {
@@ -325,6 +342,7 @@ export component DetailsPanel inherits Rectangle {
                     integer: true;
                     step: 1.0;
                     default-value: 0;
+                    pressed => { root.transform-gesture-begin(); }
                     changed(v) => { root.position-y-changed(Math.round(v)); }
                 }
                 NumberField {
@@ -335,7 +353,42 @@ export component DetailsPanel inherits Rectangle {
                     maximum: 2.0;
                     step: 0.005;
                     default-value: 1.0;
+                    pressed => { root.transform-gesture-begin(); }
                     changed(v) => { root.scale-changed(v); }
+                }
+                NumberField {
+                    label: "Scale X";
+                    value: root.selected-scale-x;
+                    percent: true;
+                    minimum: 0.0;
+                    maximum: 4.0;
+                    step: 0.005;
+                    default-value: 1.0;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.scale-x-changed(v); }
+                }
+                NumberField {
+                    label: "Scale Y";
+                    value: root.selected-scale-y;
+                    percent: true;
+                    minimum: 0.0;
+                    maximum: 4.0;
+                    step: 0.005;
+                    default-value: 1.0;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.scale-y-changed(v); }
+                }
+                NumberField {
+                    label: "Rotation";
+                    value: root.selected-rotation;
+                    integer: true;
+                    minimum: -360;
+                    maximum: 360;
+                    step: 0.5;
+                    suffix: "°";
+                    default-value: 0;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.rotation-changed(v); }
                 }
                 NumberField {
                     label: "Opacity";
@@ -345,7 +398,18 @@ export component DetailsPanel inherits Rectangle {
                     maximum: 1.0;
                     step: 0.004;
                     default-value: 1.0;
+                    pressed => { root.transform-gesture-begin(); }
                     changed(v) => { root.opacity-changed(v); }
+                }
+                Switch {
+                    label: "Flip H";
+                    checked: root.selected-flip-h;
+                    toggled(m) => { root.transform-gesture-begin(); root.flip-h-changed(m); }
+                }
+                Switch {
+                    label: "Flip V";
+                    checked: root.selected-flip-v;
+                    toggled(m) => { root.transform-gesture-begin(); root.flip-v-changed(m); }
                 }
             }
 

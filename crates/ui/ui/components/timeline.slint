@@ -504,24 +504,6 @@ export component Timeline inherits Rectangle {
                             }
                         }
                     }
-
-                    if root.all-clips.length == 0 : VerticalLayout {
-                        alignment: center;
-                        spacing: Theme.spacing-xs;
-                        Text {
-                            text: "No clips yet";
-                            color: Palette.text-muted;
-                            font-size: Theme.font-md;
-                            font-weight: 600;
-                            horizontal-alignment: center;
-                        }
-                        Text {
-                            text: "Click  Import  or drop a video onto the window";
-                            color: Palette.text-dim;
-                            font-size: Theme.font-xs;
-                            horizontal-alignment: center;
-                        }
-                    }
                 }
             }
         }

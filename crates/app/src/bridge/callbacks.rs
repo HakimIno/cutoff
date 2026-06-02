@@ -4,7 +4,7 @@ use std::time::Duration;
 use slint::{ComponentHandle, SharedString, Weak};
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use video_merger_core::domain::{ContainerFormat, ExportSpec, Playlist, Quality};
+use video_merger_core::domain::{Clip, ContainerFormat, ExportSpec, Playlist, Quality};
 use video_merger_core::services::{self, TrimSide};
 use video_merger_persistence::Project;
 use video_merger_ui::AppWindow;
@@ -437,6 +437,70 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let proj = state.project.clone();
+        window.on_selected_clip_scale_x_changed(move |s| {
+            on_selected_clip_transform_f32(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), proj.clone(), s, |c, v| c.scale_x = v);
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let proj = state.project.clone();
+        window.on_selected_clip_scale_y_changed(move |s| {
+            on_selected_clip_transform_f32(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), proj.clone(), s, |c, v| c.scale_y = v);
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let proj = state.project.clone();
+        window.on_selected_clip_rotation_changed(move |r| {
+            on_selected_clip_transform_f32(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), proj.clone(), r, |c, v| c.rotation_deg = v);
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let proj = state.project.clone();
+        window.on_selected_clip_flip_h_changed(move |m| {
+            on_selected_clip_transform_bool(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), proj.clone(), m, |c, v| c.flip_h = v);
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let proj = state.project.clone();
+        window.on_selected_clip_flip_v_changed(move |m| {
+            on_selected_clip_transform_bool(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), proj.clone(), m, |c, v| c.flip_v = v);
+        });
+    }
+    {
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let undo = state.undo.clone();
+        window.on_selected_clip_transform_gesture_begin(move || {
+            // Snapshot once at the start of a scrub/drag/toggle so the whole
+            // gesture undoes in a single step (not per intermediate value).
+            if weak.upgrade().is_some() {
+                if let Ok(pl) = pl.lock() {
+                    checkpoint(&undo, &pl);
+                }
+            }
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
         let proj = state.project.clone();
         let tracks = state.tracks.clone();
         let aj = state.active_job.clone();
@@ -613,15 +677,29 @@ fn sync_preview(
     } else {
         let tx = cmd_tx.clone();
         let proj_clone = proj.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            if let Some(cell) = LAST_SYNC.get() {
-                if let Ok(mut last_sync) = cell.lock() {
-                    if std::time::Instant::now().duration_since(*last_sync) >= std::time::Duration::from_millis(45) {
-                        *last_sync = std::time::Instant::now();
-                        let _ = tx.try_send(Command::OpenPreview { project: proj_clone });
-                    }
-                }
+        thread_local! {
+            static PREVIEW_TIMER: std::cell::RefCell<Option<slint::Timer>> = std::cell::RefCell::new(None);
+        }
+        PREVIEW_TIMER.with(|cell| {
+            let mut timer = cell.borrow_mut();
+            if timer.is_none() {
+                *timer = Some(slint::Timer::default());
+            }
+            if let Some(timer) = timer.as_mut() {
+                timer.start(
+                    slint::TimerMode::SingleShot,
+                    std::time::Duration::from_millis(50),
+                    move || {
+                        if let Some(cell) = LAST_SYNC.get() {
+                            if let Ok(mut last_sync) = cell.lock() {
+                                if std::time::Instant::now().duration_since(*last_sync) >= std::time::Duration::from_millis(45) {
+                                    *last_sync = std::time::Instant::now();
+                                    let _ = tx.try_send(Command::OpenPreview { project: proj_clone.clone() });
+                                }
+                            }
+                        }
+                    },
+                );
             }
         });
     }
@@ -656,7 +734,7 @@ fn select_and_open(
     clip_id: Uuid,
     initial_seek_us: Option<i64>,
 ) {
-    let (_path, name, codec, resolution, duration, fps, _trim_in_us, _trim_out_us, volume, muted, opacity, scale, position_x, position_y) = {
+    let (_path, name, codec, resolution, duration, fps, _trim_in_us, _trim_out_us, volume, muted, opacity, scale, position_x, position_y, scale_x, scale_y, rotation_deg, flip_h, flip_v) = {
         let pl = playlist.lock().expect("playlist mutex poisoned");
         let Some(clip) = pl.clips().iter().find(|c| c.id == clip_id) else {
             return;
@@ -690,6 +768,11 @@ fn select_and_open(
             clip.scale,
             clip.position_x,
             clip.position_y,
+            clip.scale_x,
+            clip.scale_y,
+            clip.rotation_deg,
+            clip.flip_h,
+            clip.flip_v,
         )
     };
 
@@ -738,6 +821,11 @@ fn select_and_open(
         window.set_selected_scale(scale);
         window.set_selected_position_x(position_x);
         window.set_selected_position_y(position_y);
+        window.set_selected_scale_x(scale_x);
+        window.set_selected_scale_y(scale_y);
+        window.set_selected_rotation(rotation_deg);
+        window.set_selected_flip_h(flip_h);
+        window.set_selected_flip_v(flip_v);
         window.set_playing(false);
     }
 
@@ -1741,6 +1829,54 @@ fn on_selected_clip_position_y_changed(
             }
         }
         window.set_selected_position_y(pos_y);
+        sync_preview(&playlist, &tracks, &project, &cmd_tx);
+    }
+}
+
+/// Apply an `f32` transform edit (scale-x/y, rotation, …) to the selected clip.
+/// Undo is checkpointed separately on `transform-gesture-begin`, so this only
+/// mutates and re-syncs the preview.
+fn on_selected_clip_transform_f32(
+    weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
+    project: super::SharedProject,
+    value: f32,
+    apply: impl Fn(&mut Clip, f32),
+) {
+    if let Some(window) = weak.upgrade() {
+        let sel_id = window.get_selected_id();
+        let Ok(uuid) = Uuid::parse_str(sel_id.as_str()) else { return; };
+        {
+            let mut pl = playlist.lock().expect("playlist mutex poisoned");
+            if let Some(c) = pl.clips_mut().iter_mut().find(|clip| clip.id == uuid) {
+                apply(c, value);
+            }
+        }
+        sync_preview(&playlist, &tracks, &project, &cmd_tx);
+    }
+}
+
+/// Boolean variant (flip-h / flip-v).
+fn on_selected_clip_transform_bool(
+    weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
+    project: super::SharedProject,
+    value: bool,
+    apply: impl Fn(&mut Clip, bool),
+) {
+    if let Some(window) = weak.upgrade() {
+        let sel_id = window.get_selected_id();
+        let Ok(uuid) = Uuid::parse_str(sel_id.as_str()) else { return; };
+        {
+            let mut pl = playlist.lock().expect("playlist mutex poisoned");
+            if let Some(c) = pl.clips_mut().iter_mut().find(|clip| clip.id == uuid) {
+                apply(c, value);
+            }
+        }
         sync_preview(&playlist, &tracks, &project, &cmd_tx);
     }
 }

@@ -372,70 +372,114 @@ impl AudioDecoderState {
     }
 }
 
-// ── Alpha Compositing & Resizing ──────────────────────────────────────────
+// ── Affine Compositing ─────────────────────────────────────────────────────
 
-fn resize_rgba(src: &[u8], src_w: usize, src_h: usize, dest: &mut [u8], dest_w: usize, dest_h: usize) {
-    for dy in 0..dest_h {
-        let sy = (dy * src_h) / dest_h;
-        let src_row_offset = sy * src_w * 4;
-        let dest_row_offset = dy * dest_w * 4;
-        for dx in 0..dest_w {
-            let sx = (dx * src_w) / dest_w;
-            let src_idx = src_row_offset + sx * 4;
-            let dest_idx = dest_row_offset + dx * 4;
-            dest[dest_idx..dest_idx + 4].copy_from_slice(&src[src_idx..src_idx + 4]);
-        }
-    }
-}
-
-fn composite_rgba_transformed(
+/// Composite one source frame onto `base` using a full affine transform
+/// (crop → per-axis scale → flip → rotate around center → translate), via
+/// inverse mapping with nearest-neighbour sampling.
+///
+/// Geometry matches the export filter graph in `reencode.rs`:
+///   * the clip is centered on the canvas, then shifted by `position_*`
+///     (already converted to canvas pixels by the caller);
+///   * positive `rotation_deg` rotates clockwise on the y-down screen.
+///
+/// Only the transformed clip's axis-aligned bounding box is iterated, so cost
+/// stays proportional to the clip's on-screen size rather than the canvas.
+#[allow(clippy::too_many_arguments)]
+fn composite_affine(
     base: &mut [u8],
     base_w: usize,
     base_h: usize,
-    overlay: &[u8],
-    overlay_w: usize,
-    overlay_h: usize,
-    offset_x: i32,
-    offset_y: i32,
+    src: &[u8],
+    src_w: usize,
+    src_h: usize,
+    // Crop in *source-frame* pixels (already scaled to preview resolution).
+    crop_l: usize,
+    crop_t: usize,
+    crop_r: usize,
+    crop_b: usize,
+    scale_x: f32,
+    scale_y: f32,
+    rotation_deg: f32,
+    flip_h: bool,
+    flip_v: bool,
     opacity: f32,
+    // Clip-center position on the canvas, in canvas pixels.
+    center_x: f32,
+    center_y: f32,
 ) {
     if opacity <= 0.0 {
         return;
     }
-    
-    for dy in 0..overlay_h {
-        let dest_y = offset_y + dy as i32;
-        if dest_y < 0 || dest_y >= base_h as i32 {
-            continue;
-        }
-        let src_row_offset = dy * overlay_w * 4;
-        let dest_row_offset = (dest_y as usize) * base_w * 4;
-        
-        for dx in 0..overlay_w {
-            let dest_x = offset_x + dx as i32;
-            if dest_x < 0 || dest_x >= base_w as i32 {
+    // Cropped source region.
+    let csw = src_w.saturating_sub(crop_l + crop_r);
+    let csh = src_h.saturating_sub(crop_t + crop_b);
+    if csw == 0 || csh == 0 || scale_x.abs() < 1e-6 || scale_y.abs() < 1e-6 {
+        return;
+    }
+
+    let theta = rotation_deg.to_radians();
+    let (sin_t, cos_t) = theta.sin_cos();
+
+    // On-canvas half-extents of the unrotated, scaled clip.
+    let hw = csw as f32 * scale_x.abs() / 2.0;
+    let hh = csh as f32 * scale_y.abs() / 2.0;
+
+    // Axis-aligned bounding box of the rotated rectangle.
+    let ext_x = hw * cos_t.abs() + hh * sin_t.abs();
+    let ext_y = hw * sin_t.abs() + hh * cos_t.abs();
+    let min_x = ((center_x - ext_x).floor() as i32).max(0);
+    let max_x = ((center_x + ext_x).ceil() as i32).min(base_w as i32);
+    let min_y = ((center_y - ext_y).floor() as i32).max(0);
+    let max_y = ((center_y + ext_y).ceil() as i32).min(base_h as i32);
+
+    let inv_sx = 1.0 / scale_x;
+    let inv_sy = 1.0 / scale_y;
+
+    for dy in min_y..max_y {
+        let v = dy as f32 + 0.5 - center_y;
+        let dest_row = (dy as usize) * base_w * 4;
+        for dx in min_x..max_x {
+            let u = dx as f32 + 0.5 - center_x;
+            // Inverse rotation (by -theta).
+            let ur = u * cos_t + v * sin_t;
+            let vr = -u * sin_t + v * cos_t;
+            // Inverse scale.
+            let mut au = ur * inv_sx;
+            let mut av = vr * inv_sy;
+            // Inverse flip.
+            if flip_h { au = -au; }
+            if flip_v { av = -av; }
+            // Cropped-source pixel.
+            let sx = au + csw as f32 / 2.0;
+            let sy = av + csh as f32 / 2.0;
+            if sx < 0.0 || sy < 0.0 {
                 continue;
             }
-            let src_idx = src_row_offset + dx * 4;
-            let dest_idx = dest_row_offset + (dest_x as usize) * 4;
-            
-            let a_overlay = (overlay[src_idx + 3] as f32 * opacity) as u8;
-            if a_overlay == 0 {
+            let sxi = sx as usize;
+            let syi = sy as usize;
+            if sxi >= csw || syi >= csh {
                 continue;
-            } else if a_overlay == 255 {
-                base[dest_idx] = overlay[src_idx];
-                base[dest_idx + 1] = overlay[src_idx + 1];
-                base[dest_idx + 2] = overlay[src_idx + 2];
-                base[dest_idx + 3] = a_overlay;
+            }
+            let src_idx = ((syi + crop_t) * src_w + (sxi + crop_l)) * 4;
+            let dest_idx = dest_row + (dx as usize) * 4;
+
+            let a_src = (src[src_idx + 3] as f32 * opacity) as u8;
+            if a_src == 0 {
+                continue;
+            } else if a_src == 255 {
+                base[dest_idx] = src[src_idx];
+                base[dest_idx + 1] = src[src_idx + 1];
+                base[dest_idx + 2] = src[src_idx + 2];
+                base[dest_idx + 3] = 255;
             } else {
-                let alpha = a_overlay as f32 / 255.0;
+                let alpha = a_src as f32 / 255.0;
                 let inv_alpha = 1.0 - alpha;
-                base[dest_idx] = (overlay[src_idx] as f32 * alpha + base[dest_idx] as f32 * inv_alpha) as u8;
-                base[dest_idx + 1] = (overlay[src_idx + 1] as f32 * alpha + base[dest_idx + 1] as f32 * inv_alpha) as u8;
-                base[dest_idx + 2] = (overlay[src_idx + 2] as f32 * alpha + base[dest_idx + 2] as f32 * inv_alpha) as u8;
+                base[dest_idx] = (src[src_idx] as f32 * alpha + base[dest_idx] as f32 * inv_alpha) as u8;
+                base[dest_idx + 1] = (src[src_idx + 1] as f32 * alpha + base[dest_idx + 1] as f32 * inv_alpha) as u8;
+                base[dest_idx + 2] = (src[src_idx + 2] as f32 * alpha + base[dest_idx + 2] as f32 * inv_alpha) as u8;
                 let a_base = base[dest_idx + 3] as f32 / 255.0;
-                let combined_a = alpha + a_base * inv_alpha;
-                base[dest_idx + 3] = (combined_a * 255.0) as u8;
+                base[dest_idx + 3] = ((alpha + a_base * inv_alpha) * 255.0) as u8;
             }
         }
     }
@@ -1053,17 +1097,13 @@ fn render_timeline_frame(
         _ => 0,
     });
 
-    // Fast path: one opaque, untransformed clip that fills the canvas → forward
-    // the decoder's RGBA Arc directly (no canvas fill, no resize, no composite).
+    // Fast path: one identity-transform clip that fills the canvas → forward
+    // the decoder's RGBA Arc directly (no canvas fill, no sampling, no composite).
     if let [(_, tc)] = active.as_slice() {
-        let untransformed = tc.clip.opacity >= 1.0
-            && (tc.clip.scale - 1.0).abs() < 1e-3
-            && tc.clip.position_x == 0
-            && tc.clip.position_y == 0;
-        if untransformed {
+        let local_us = t_us - tc.start_us + tc.clip.trim_in_us();
+        if tc.clip.resolved_transform(local_us).is_identity() {
             if let Some(state) = decoder_for(decoders, tc, preview_scale) {
-                let target_src_us = t_us - tc.start_us + tc.clip.trim_in_us();
-                if let Some(frame) = state.get_frame_at(target_src_us) {
+                if let Some(frame) = state.get_frame_at(local_us) {
                     if frame.width == width && frame.height == height {
                         return frame.rgba;
                     }
@@ -1084,41 +1124,40 @@ fn render_timeline_frame(
     }
 
     for (_, tc) in active {
-        let target_src_us = t_us - tc.start_us + tc.clip.trim_in_us();
-        let (scale, opacity, pos_x, pos_y) =
-            (tc.clip.scale, tc.clip.opacity, tc.clip.position_x, tc.clip.position_y);
+        let local_us = t_us - tc.start_us + tc.clip.trim_in_us();
+        let xf = tc.clip.resolved_transform(local_us);
 
         let frame = match decoder_for(decoders, tc, preview_scale) {
-            Some(state) => match state.get_frame_at(target_src_us) {
+            Some(state) => match state.get_frame_at(local_us) {
                 Some(f) => f,
                 None => continue,
             },
             None => continue,
         };
 
-        let overlay_w = ((frame.width as f32 * scale).round() as usize).max(1);
-        let overlay_h = ((frame.height as f32 * scale).round() as usize).max(1);
+        // Crop is authored in full project-resolution space; scale it to the
+        // (possibly downscaled) preview frame.
+        let (crop_l, crop_t, crop_r, crop_b) = match xf.crop {
+            Some(c) => (
+                (c.left as f32 * preview_scale).round() as usize,
+                (c.top as f32 * preview_scale).round() as usize,
+                (c.right as f32 * preview_scale).round() as usize,
+                (c.bottom as f32 * preview_scale).round() as usize,
+            ),
+            None => (0, 0, 0, 0),
+        };
 
-        let center_offset_x = (width as i32 - overlay_w as i32) / 2;
-        let center_offset_y = (height as i32 - overlay_h as i32) / 2;
-        // Clip positions are authored in full project-resolution space, so
-        // scale them to match the (possibly downscaled) preview canvas.
-        let offset_x = (pos_x as f32 * preview_scale).round() as i32 + center_offset_x;
-        let offset_y = (pos_y as f32 * preview_scale).round() as i32 + center_offset_y;
+        // Clip center on the canvas: canvas center + position (full-res → preview).
+        let center_x = width as f32 / 2.0 + xf.position_x as f32 * preview_scale;
+        let center_y = height as f32 / 2.0 + xf.position_y as f32 * preview_scale;
 
-        if overlay_w != frame.width as usize || overlay_h != frame.height as usize {
-            let mut resized = vec![0u8; overlay_w * overlay_h * 4];
-            resize_rgba(&frame.rgba, frame.width as usize, frame.height as usize, &mut resized, overlay_w, overlay_h);
-            composite_rgba_transformed(
-                canvas.as_mut_slice(), width as usize, height as usize,
-                &resized, overlay_w, overlay_h, offset_x, offset_y, opacity,
-            );
-        } else {
-            composite_rgba_transformed(
-                canvas.as_mut_slice(), width as usize, height as usize,
-                &frame.rgba, frame.width as usize, frame.height as usize, offset_x, offset_y, opacity,
-            );
-        }
+        composite_affine(
+            canvas.as_mut_slice(), width as usize, height as usize,
+            &frame.rgba, frame.width as usize, frame.height as usize,
+            crop_l, crop_t, crop_r, crop_b,
+            xf.scale_x, xf.scale_y, xf.rotation_deg, xf.flip_h, xf.flip_v,
+            xf.opacity, center_x, center_y,
+        );
     }
 
     Arc::from(canvas.as_slice())

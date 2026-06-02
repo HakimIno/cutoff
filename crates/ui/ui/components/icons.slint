@@ -91,24 +91,24 @@ export component SpeakerMutedIcon inherits Path {
     commands: "M 2 5 H 5 L 9 1 V 15 L 5 11 H 2 Z M 11 5 L 15 9 M 15 5 L 11 9";
 }
 
-export component EyeIcon inherits Path {
+/// Majesticons eye-line (white glyph; tinted via `colorize`).
+export component EyeLineIcon inherits Image {
     in property <color> icon-color: Palette.text;
-    fill: root.icon-color;
-    width: 12px;
-    height: 12px;
-    viewbox-width: 16;
-    viewbox-height: 16;
-    commands: "M 1 8 C 4 3 12 3 15 8 C 12 13 4 13 1 8 Z M 8 5.5 A 2.5 2.5 0 0 1 8 10.5 A 2.5 2.5 0 0 1 8 5.5 Z";
+    source: @image-url("../../../../assets/majesticons/majesticons--eye-line.png");
+    width: 14px;
+    height: 14px;
+    image-fit: contain;
+    colorize: root.icon-color;
 }
 
-export component EyeOffIcon inherits Path {
+/// Majesticons eye-off-line — hidden / muted video track.
+export component EyeOffLineIcon inherits Image {
     in property <color> icon-color: Palette.text;
-    fill: root.icon-color;
-    width: 12px;
-    height: 12px;
-    viewbox-width: 16;
-    viewbox-height: 16;
-    commands: "M 1 8 C 4 3 12 3 15 8 C 13.5 10.5 11 12 8 12 L 8 10 A 2 2 0 0 0 8 6 Z M 2 2 L 14 14";
+    source: @image-url("../../../../assets/majesticons/majesticons--eye-off-line.png");
+    width: 14px;
+    height: 14px;
+    image-fit: contain;
+    colorize: root.icon-color;
 }
 
 export component LockClosedIcon inherits Path {

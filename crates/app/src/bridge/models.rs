@@ -65,7 +65,7 @@ fn waveform_to_bars(path: &Path, bars: usize) -> WaveformBars {
     if max_peak > 0.0001 {
         // Timeline waveforms are visual meters, not calibrated audio meters.
         // Normalize per clip so quiet camera audio doesn't collapse into a flat line.
-        let gain = (0.82 / max_peak).clamp(1.0, 40.0);
+        let gain = (0.78 / max_peak).clamp(1.0, 40.0);
         for peak in &mut out_peaks {
             *peak = (*peak * gain).clamp(0.0, 1.0);
         }
@@ -101,7 +101,7 @@ pub fn clip_to_data(clip: &Clip) -> ClipData {
     let waveform_path = asset_waveform_path(clip);
     let waveform = waveform_path
         .as_deref()
-        .map(|p| waveform_to_bars(p, 200))
+        .map(|p| waveform_to_bars(p, 320))
         .unwrap_or_default();
     ClipData {
         id: SharedString::from(row.id),

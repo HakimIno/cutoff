@@ -39,6 +39,11 @@ export component AppWindow inherits Window {
     in property <float> selected-scale;
     in property <int> selected-position-x;
     in property <int> selected-position-y;
+    in property <float> selected-scale-x: 1.0;
+    in property <float> selected-scale-y: 1.0;
+    in property <float> selected-rotation: 0.0;
+    in property <bool> selected-flip-h: false;
+    in property <bool> selected-flip-v: false;
     in property <int> project-width: 1920;
     in property <int> project-height: 1080;
     in property <int> selected-width: 1920;
@@ -121,6 +126,12 @@ export component AppWindow inherits Window {
     callback selected-clip-scale-changed(float);
     callback selected-clip-position-x-changed(int);
     callback selected-clip-position-y-changed(int);
+    callback selected-clip-scale-x-changed(float);
+    callback selected-clip-scale-y-changed(float);
+    callback selected-clip-rotation-changed(float);
+    callback selected-clip-flip-h-changed(bool);
+    callback selected-clip-flip-v-changed(bool);
+    callback selected-clip-transform-gesture-begin();
 
     in property <bool> master-muted;
 
@@ -262,9 +273,16 @@ export component AppWindow inherits Window {
                                 selected-scale: root.selected-scale;
                                 selected-position-x: root.selected-position-x;
                                 selected-position-y: root.selected-position-y;
+                                selected-scale-x: root.selected-scale-x;
+                                selected-scale-y: root.selected-scale-y;
+                                selected-rotation: root.selected-rotation;
                                 scale-changed(s) => { root.selected-clip-scale-changed(s); }
                                 position-x-changed(x) => { root.selected-clip-position-x-changed(x); }
                                 position-y-changed(y) => { root.selected-clip-position-y-changed(y); }
+                                scale-x-changed(s) => { root.selected-clip-scale-x-changed(s); }
+                                scale-y-changed(s) => { root.selected-clip-scale-y-changed(s); }
+                                rotation-changed(r) => { root.selected-clip-rotation-changed(r); }
+                                transform-gesture-begin => { root.selected-clip-transform-gesture-begin(); }
                             }
                         }
                     }
@@ -328,12 +346,23 @@ export component AppWindow inherits Window {
                     selected-scale: root.selected-scale;
                     selected-position-x: root.selected-position-x;
                     selected-position-y: root.selected-position-y;
+                    selected-scale-x: root.selected-scale-x;
+                    selected-scale-y: root.selected-scale-y;
+                    selected-rotation: root.selected-rotation;
+                    selected-flip-h: root.selected-flip-h;
+                    selected-flip-v: root.selected-flip-v;
                     volume-changed(v) => { root.selected-clip-volume-changed(v); }
                     muted-changed(m) => { root.selected-clip-muted-changed(m); }
                     opacity-changed(o) => { root.selected-clip-opacity-changed(o); }
                     scale-changed(s) => { root.selected-clip-scale-changed(s); }
                     position-x-changed(x) => { root.selected-clip-position-x-changed(x); }
                     position-y-changed(y) => { root.selected-clip-position-y-changed(y); }
+                    scale-x-changed(s) => { root.selected-clip-scale-x-changed(s); }
+                    scale-y-changed(s) => { root.selected-clip-scale-y-changed(s); }
+                    rotation-changed(r) => { root.selected-clip-rotation-changed(r); }
+                    flip-h-changed(m) => { root.selected-clip-flip-h-changed(m); }
+                    flip-v-changed(m) => { root.selected-clip-flip-v-changed(m); }
+                    transform-gesture-begin => { root.selected-clip-transform-gesture-begin(); }
                 }
             }
 

@@ -299,28 +299,52 @@ fn build_multitrack_filter(
         let enable_start = seg.start_us as f64 / 1_000_000.0;
         let enable_end = seg.end_us as f64 / 1_000_000.0;
 
-        let scale = seg.scale;
-        let opacity = seg.opacity;
-        let mut overlay_w = (w as f32 * scale).round() as i32;
-        let mut overlay_h = (h as f32 * scale).round() as i32;
-        // Keep dimensions even to prevent ffmpeg chroma errors
-        if overlay_w % 2 != 0 { overlay_w += 1; }
-        if overlay_h % 2 != 0 { overlay_h += 1; }
-        let overlay_w = overlay_w.max(2);
-        let overlay_h = overlay_h.max(2);
+        let xf = &seg.transform;
+        let opacity = xf.opacity;
+        // Per-axis scale relative to the project frame, kept even for chroma.
+        let even = |v: f32| { let mut n = v.round() as i32; if n % 2 != 0 { n += 1; } n.max(2) };
+        let overlay_w = even(w as f32 * xf.scale_x);
+        let overlay_h = even(h as f32 * xf.scale_y);
 
-        let overlay_x = seg.position_x + (w as i32 - overlay_w) / 2;
-        let overlay_y = seg.position_y + (h as i32 - overlay_h) / 2;
-
-        // Normalize video, scale and set opacity
+        // Build the per-segment filter chain. Order matches the preview
+        // compositor's inverse-map sampler: crop → scale → flip → opacity →
+        // rotate (around center) → place.
+        let mut chain = String::new();
+        // 1. Crop in source space (pixels off each edge), if any.
+        if let Some(c) = xf.crop {
+            let _ = write!(chain, "crop=in_w-{}:in_h-{}:{}:{},", c.left + c.right, c.top + c.bottom, c.left, c.top);
+        }
+        // 2. Scale (aspect-fit + pad) to the target box, normalize sar/fps.
         let _ = write!(
-            filter,
-            "[{i}:v]scale={overlay_w}:{overlay_h}:force_original_aspect_ratio=decrease,\
-             pad={overlay_w}:{overlay_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps_str},\
-             format=yuva420p,colorchannelmixer=aa={opacity:.3},setpts=PTS+{delay_secs}/TB[ov{seg_i}];"
+            chain,
+            "scale={overlay_w}:{overlay_h}:force_original_aspect_ratio=decrease,\
+             pad={overlay_w}:{overlay_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps_str},format=yuva420p,"
         );
+        // 3. Flips.
+        if xf.flip_h { chain.push_str("hflip,"); }
+        if xf.flip_v { chain.push_str("vflip,"); }
+        // 4. Opacity.
+        let _ = write!(chain, "colorchannelmixer=aa={opacity:.3},");
+        // 5. Rotation around center. Expand the canvas to the diagonal so
+        //    corners are never clipped; fill the new area transparently.
+        //    Positive degrees rotate clockwise, matching the preview.
+        let (final_w, final_h) = if xf.rotation_deg.abs() > 1e-3 {
+            let rad = xf.rotation_deg.to_radians();
+            let diag = ((overlay_w as f32).hypot(overlay_h as f32)).ceil() as i32;
+            let diag = if diag % 2 != 0 { diag + 1 } else { diag };
+            let _ = write!(chain, "rotate={rad:.6}:ow={diag}:oh={diag}:fillcolor=none@0,");
+            (diag, diag)
+        } else {
+            (overlay_w, overlay_h)
+        };
+        // 6. Time placement.
+        let _ = write!(chain, "setpts=PTS+{delay_secs}/TB[ov{seg_i}];");
 
-        // Overlay onto accumulated canvas.
+        let _ = write!(filter, "[{i}:v]{chain}");
+
+        // Center the (possibly rotated) box on the canvas + position offset.
+        let overlay_x = seg.transform.position_x + (w as i32 - final_w) / 2;
+        let overlay_y = seg.transform.position_y + (h as i32 - final_h) / 2;
         let out_label = format!("cv{seg_i}");
         let _ = write!(
             filter,
@@ -463,5 +487,41 @@ mod tests {
         assert!(filter.contains("color=c=black:s=1920x1080"));
         assert!(filter.contains("overlay"));
         assert!(filter.contains("[outv]"));
+    }
+
+    #[test]
+    fn multitrack_filter_emits_rotate_flip_crop() {
+        use crate::composite::build_render_plan;
+        use video_merger_core::domain::{
+            Clip, CodecProfile, Crop, MediaInfo, Project, Resolution, TrackClip,
+        };
+        use std::path::PathBuf;
+        use std::time::Duration;
+
+        let mut proj = Project::with_default_tracks();
+        let v1 = proj.track_index_by_name("V1").unwrap();
+        let mut clip = Clip::new(
+            PathBuf::from("/tmp/base.mp4"),
+            MediaInfo {
+                duration: Duration::from_secs(10),
+                profile: CodecProfile {
+                    video_codec: "h264".into(),
+                    audio_codec: "aac".into(),
+                    resolution: Resolution { width: 1920, height: 1080 },
+                    frame_rate_mhz: 30_000,
+                    pixel_format: "yuv420p".into(),
+                },
+            },
+        );
+        clip.rotation_deg = 45.0;
+        clip.flip_h = true;
+        clip.crop = Some(Crop { left: 10, top: 20, right: 0, bottom: 0 });
+        proj.tracks[v1].clips.push(TrackClip { clip, start_us: 0 });
+
+        let plan = build_render_plan(&proj);
+        let filter = build_multitrack_filter(&plan, 1920, 1080, "30.000");
+        assert!(filter.contains("rotate="), "rotation should emit a rotate filter");
+        assert!(filter.contains("hflip"), "flip_h should emit hflip");
+        assert!(filter.contains("crop=in_w-10:in_h-20:10:20"), "crop should emit a crop filter");
     }
 }

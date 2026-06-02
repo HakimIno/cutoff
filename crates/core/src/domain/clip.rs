@@ -4,6 +4,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use super::codec::CodecProfile;
+use super::transform::{Crop, ResolvedTransform};
 
 pub type ClipId = Uuid;
 
@@ -40,15 +41,32 @@ pub struct Clip {
     /// Opacity (0.0 to 1.0)
     #[serde(default = "default_opacity")]
     pub opacity: f32,
-    /// Scale (0.0 to 2.0)
+    /// Uniform scale (0.0 to 2.0). Kept for back-compat with v1 projects; the
+    /// effective per-axis scale is `scale * scale_x` / `scale * scale_y`.
     #[serde(default = "default_scale")]
     pub scale: f32,
-    /// X Position offset (pixels)
+    /// X Position offset (pixels, full project-resolution space).
     #[serde(default)]
     pub position_x: i32,
-    /// Y Position offset (pixels)
+    /// Y Position offset (pixels, full project-resolution space).
     #[serde(default)]
     pub position_y: i32,
+    /// Per-axis scale multiplier (on top of the uniform `scale`). 1.0 = none.
+    #[serde(default = "default_scale")]
+    pub scale_x: f32,
+    #[serde(default = "default_scale")]
+    pub scale_y: f32,
+    /// Clockwise rotation around the clip center, in degrees.
+    #[serde(default)]
+    pub rotation_deg: f32,
+    /// Horizontal / vertical mirror flips.
+    #[serde(default)]
+    pub flip_h: bool,
+    #[serde(default)]
+    pub flip_v: bool,
+    /// Optional source-space crop applied before scaling.
+    #[serde(default)]
+    pub crop: Option<Crop>,
 }
 
 fn default_volume() -> f32 {
@@ -81,6 +99,32 @@ impl Clip {
             scale: 1.0,
             position_x: 0,
             position_y: 0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            rotation_deg: 0.0,
+            flip_h: false,
+            flip_v: false,
+            crop: None,
+        }
+    }
+
+    /// Resolve this clip's transform at `local_us` (microseconds into the
+    /// clip's own timeline, i.e. `timeline_t - start + trim_in`).
+    ///
+    /// Phase 1: returns the static fields. Phase 2 will evaluate keyframe
+    /// tracks here; `_local_us` is already threaded through every renderer so
+    /// animation will require no further plumbing.
+    pub fn resolved_transform(&self, _local_us: i64) -> ResolvedTransform {
+        ResolvedTransform {
+            opacity: self.opacity,
+            scale_x: self.scale * self.scale_x,
+            scale_y: self.scale * self.scale_y,
+            position_x: self.position_x,
+            position_y: self.position_y,
+            rotation_deg: self.rotation_deg,
+            flip_h: self.flip_h,
+            flip_v: self.flip_v,
+            crop: self.crop.filter(|c| !c.is_noop()),
         }
     }
 

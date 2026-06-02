@@ -65,6 +65,9 @@ export component PreviewPanel inherits Rectangle {
     in property <float> selected-scale: 1.0;
     in property <int> selected-position-x: 0;
     in property <int> selected-position-y: 0;
+    in property <float> selected-scale-x: 1.0;
+    in property <float> selected-scale-y: 1.0;
+    in property <float> selected-rotation: 0.0;
 
     callback play-toggle();
     callback step-frame(int);
@@ -74,6 +77,11 @@ export component PreviewPanel inherits Rectangle {
     callback scale-changed(float);
     callback position-x-changed(int);
     callback position-y-changed(int);
+    callback scale-x-changed(float);
+    callback scale-y-changed(float);
+    callback rotation-changed(float);
+    // Fired once at the start of a drag so the bridge can checkpoint undo.
+    callback transform-gesture-begin();
 
     background: Palette.surface;
     border-radius: Theme.radius-lg;
@@ -107,11 +115,15 @@ export component PreviewPanel inherits Rectangle {
 
             property <float> scale-factor: (nw > 0px && nh > 0px) ? (disp-w / nw) : 1.0;
 
-            property <length> clip-w: root.selected-width * root.selected-scale * 1px * scale-factor;
-            property <length> clip-h: root.selected-height * root.selected-scale * 1px * scale-factor;
-            
-            property <length> clip-x: disp-x + (root.selected-position-x * 1px + (nw - root.selected-width * root.selected-scale * 1px) / 2) * scale-factor;
-            property <length> clip-y: disp-y + (root.selected-position-y * 1px + (nh - root.selected-height * root.selected-scale * 1px) / 2) * scale-factor;
+            // Effective per-axis scale = uniform × per-axis (matches ResolvedTransform).
+            property <float> eff-sx: root.selected-scale * root.selected-scale-x;
+            property <float> eff-sy: root.selected-scale * root.selected-scale-y;
+
+            property <length> clip-w: root.selected-width * eff-sx * 1px * scale-factor;
+            property <length> clip-h: root.selected-height * eff-sy * 1px * scale-factor;
+
+            property <length> clip-x: disp-x + (root.selected-position-x * 1px + (nw - root.selected-width * eff-sx * 1px) / 2) * scale-factor;
+            property <length> clip-y: disp-y + (root.selected-position-y * 1px + (nh - root.selected-height * eff-sy * 1px) / 2) * scale-factor;
 
             // Live frame (visible only when selection has produced a frame)
             img := Image {
@@ -130,7 +142,22 @@ export component PreviewPanel inherits Rectangle {
                 height: clip-h;
                 border-width: 1.5px;
                 border-color: Palette.accent; // System primary color accent boundary
-                
+
+                // Rotation handle — a dot above the top edge.
+                Rectangle {
+                    x: (parent.width - 10px) / 2; y: -26px;
+                    width: 10px; height: 10px;
+                    background: Palette.accent;
+                    border-width: 1.5px;
+                    border-color: white;
+                    border-radius: 5px;
+                }
+                Rectangle { // stem connecting the rotation dot to the box
+                    x: (parent.width - 1px) / 2; y: -21px;
+                    width: 1px; height: 21px;
+                    background: Palette.accent;
+                }
+
                 // Corners
                 // Top-Left
                 Rectangle {
@@ -212,41 +239,58 @@ export component PreviewPanel inherits Rectangle {
                 height: 100%;
 
                 property <bool> is-dragging: false;
-                property <string> drag-type; // "move" or "scale"
-                
+                property <string> drag-type; // "move" | "scale" | "scale-x" | "scale-y" | "rotate"
+
                 property <length> start-mouse-x;
                 property <length> start-mouse-y;
                 property <float> start-scale;
+                property <float> start-scale-x;
+                property <float> start-scale-y;
+                property <float> start-rotation;
+                property <float> start-angle-deg;
                 property <int> start-pos-x;
                 property <int> start-pos-y;
-                
-                property <length> center-x;
-                property <length> center-y;
+
+                property <length> center-x: clip-x + clip-w / 2;
+                property <length> center-y: clip-y + clip-h / 2;
                 property <length> start-dist;
+                property <length> start-hdist;
+                property <length> start-vdist;
 
-                property <length> mx: self.mouse-x;
-                property <length> my: self.mouse-y;
                 property <length> thresh: 12px;
-                
-                property <bool> near-tl: abs(self.mx - clip-x) < self.thresh && abs(self.my - clip-y) < self.thresh;
-                property <bool> near-tr: abs(self.mx - (clip-x + clip-w)) < self.thresh && abs(self.my - clip-y) < self.thresh;
-                property <bool> near-bl: abs(self.mx - clip-x) < self.thresh && abs(self.my - (clip-y + clip-h)) < self.thresh;
-                property <bool> near-br: abs(self.mx - (clip-x + clip-w)) < self.thresh && abs(self.my - (clip-y + clip-h)) < self.thresh;
-                
-                property <bool> near-t: abs(self.mx - (clip-x + clip-w/2)) < self.thresh && abs(self.my - clip-y) < self.thresh;
-                property <bool> near-b: abs(self.mx - (clip-x + clip-w/2)) < self.thresh && abs(self.my - (clip-y + clip-h)) < self.thresh;
-                property <bool> near-l: abs(self.mx - clip-x) < self.thresh && abs(self.my - (clip-y + clip-h/2)) < self.thresh;
-                property <bool> near-r: abs(self.mx - (clip-x + clip-w)) < self.thresh && abs(self.my - (clip-y + clip-h/2)) < self.thresh;
 
-                property <bool> near-handle: self.near-tl || self.near-tr || self.near-bl || self.near-br || self.near-t || self.near-b || self.near-l || self.near-r;
-                property <bool> inside-box: self.mx >= clip-x && self.mx <= clip-x + clip-w && self.my >= clip-y && self.my <= clip-y + clip-h;
+                // The selection box is drawn axis-aligned (Slint Rectangle can't
+                // rotate), so hit-test against plain cursor coordinates. The
+                // video content itself is rotated by the compositor.
+                property <length> lmx: self.mouse-x;
+                property <length> lmy: self.mouse-y;
 
-                mouse-cursor: self.is-dragging ? (self.drag-type == "scale" ? MouseCursor.nesw-resize : MouseCursor.move) : (
-                    self.near-tl || self.near-br ? MouseCursor.nwse-resize : (
-                        self.near-tr || self.near-bl ? MouseCursor.nesw-resize : (
-                            self.near-t || self.near-b ? MouseCursor.ns-resize : (
-                                self.near-l || self.near-r ? MouseCursor.ew-resize : (
-                                    self.inside-box ? MouseCursor.move : MouseCursor.default
+                // Rotation handle sits 26px above the top edge.
+                property <bool> near-rot: abs(self.lmx - self.center-x) < self.thresh && abs(self.lmy - (clip-y - 26px)) < self.thresh;
+
+                property <bool> near-tl: abs(self.lmx - clip-x) < self.thresh && abs(self.lmy - clip-y) < self.thresh;
+                property <bool> near-tr: abs(self.lmx - (clip-x + clip-w)) < self.thresh && abs(self.lmy - clip-y) < self.thresh;
+                property <bool> near-bl: abs(self.lmx - clip-x) < self.thresh && abs(self.lmy - (clip-y + clip-h)) < self.thresh;
+                property <bool> near-br: abs(self.lmx - (clip-x + clip-w)) < self.thresh && abs(self.lmy - (clip-y + clip-h)) < self.thresh;
+
+                property <bool> near-corner: self.near-tl || self.near-tr || self.near-bl || self.near-br;
+                property <bool> near-t: abs(self.lmx - (clip-x + clip-w/2)) < self.thresh && abs(self.lmy - clip-y) < self.thresh;
+                property <bool> near-b: abs(self.lmx - (clip-x + clip-w/2)) < self.thresh && abs(self.lmy - (clip-y + clip-h)) < self.thresh;
+                property <bool> near-l: abs(self.lmx - clip-x) < self.thresh && abs(self.lmy - (clip-y + clip-h/2)) < self.thresh;
+                property <bool> near-r: abs(self.lmx - (clip-x + clip-w)) < self.thresh && abs(self.lmy - (clip-y + clip-h/2)) < self.thresh;
+
+                property <bool> inside-box: self.lmx >= clip-x && self.lmx <= clip-x + clip-w && self.lmy >= clip-y && self.lmy <= clip-y + clip-h;
+
+                mouse-cursor: self.is-dragging ? (
+                    self.drag-type == "rotate" ? MouseCursor.crosshair : (
+                        self.drag-type == "move" ? MouseCursor.move : MouseCursor.nesw-resize)) : (
+                    self.near-rot ? MouseCursor.crosshair : (
+                        self.near-tl || self.near-br ? MouseCursor.nwse-resize : (
+                            self.near-tr || self.near-bl ? MouseCursor.nesw-resize : (
+                                self.near-t || self.near-b ? MouseCursor.ns-resize : (
+                                    self.near-l || self.near-r ? MouseCursor.ew-resize : (
+                                        self.inside-box ? MouseCursor.move : MouseCursor.default
+                                    )
                                 )
                             )
                         )
@@ -255,48 +299,61 @@ export component PreviewPanel inherits Rectangle {
 
                 pointer-event(e) => {
                     if (e.kind == PointerEventKind.down) {
-                        if (self.near-handle) {
+                        if (self.near-rot || self.near-corner || self.near-t || self.near-b || self.near-l || self.near-r || self.inside-box) {
                             self.is-dragging = true;
-                            self.drag-type = "scale";
                             self.start-scale = root.selected-scale;
-                            self.center-x = clip-x + clip-w / 2;
-                            self.center-y = clip-y + clip-h / 2;
-                            
-                            let dx = self.mx - self.center-x;
-                            let dy = self.my - self.center-y;
-                            self.start-dist = Math.sqrt((dx / 1px) * (dx / 1px) + (dy / 1px) * (dy / 1px)) * 1px;
-                        } else if (self.inside-box) {
-                            self.is-dragging = true;
-                            self.drag-type = "move";
-                            self.start-mouse-x = self.mx;
-                            self.start-mouse-y = self.my;
+                            self.start-scale-x = root.selected-scale-x;
+                            self.start-scale-y = root.selected-scale-y;
+                            self.start-rotation = root.selected-rotation;
                             self.start-pos-x = root.selected-position-x;
                             self.start-pos-y = root.selected-position-y;
+                            self.start-mouse-x = self.mouse-x;
+                            self.start-mouse-y = self.mouse-y;
+                            self.start-angle-deg = Math.atan2((self.mouse-y - self.center-y) / 1px, (self.mouse-x - self.center-x) / 1px) / 1deg;
+                            self.start-dist = Math.sqrt((self.lmx - self.center-x) / 1px * ((self.lmx - self.center-x) / 1px) + (self.lmy - self.center-y) / 1px * ((self.lmy - self.center-y) / 1px)) * 1px;
+                            self.start-hdist = abs(self.lmx - self.center-x);
+                            self.start-vdist = abs(self.lmy - self.center-y);
+
+                            self.drag-type =
+                                self.near-rot ? "rotate" : (
+                                    self.near-corner ? "scale" : (
+                                        self.near-t || self.near-b ? "scale-y" : (
+                                            self.near-l || self.near-r ? "scale-x" : "move")));
+                            root.transform-gesture-begin();
                         }
                     } else if (e.kind == PointerEventKind.up) {
                         self.is-dragging = false;
                     }
                 }
-                
+
                 moved => {
                     if (self.is-dragging && self.pressed) {
                         if (self.drag-type == "scale") {
-                            let dx = self.mx - self.center-x;
-                            let dy = self.my - self.center-y;
-                            let curr-dist = Math.sqrt((dx / 1px) * (dx / 1px) + (dy / 1px) * (dy / 1px));
+                            let dx = (self.lmx - self.center-x) / 1px;
+                            let dy = (self.lmy - self.center-y) / 1px;
+                            let curr-dist = Math.sqrt(dx * dx + dy * dy);
                             let d-start = self.start-dist / 1px;
                             if (d-start > 0.0) {
-                                let new-scale = self.start-scale * (curr-dist / d-start);
-                                let clamped-scale = max(0.1, min(2.0, new-scale));
-                                root.scale-changed(clamped-scale);
+                                root.scale-changed(max(0.1, min(2.0, self.start-scale * (curr-dist / d-start))));
                             }
+                        } else if (self.drag-type == "scale-x") {
+                            let d-start = self.start-hdist / 1px;
+                            if (d-start > 0.0) {
+                                let curr = abs(self.lmx - self.center-x) / 1px;
+                                root.scale-x-changed(max(0.05, min(4.0, self.start-scale-x * (curr / d-start))));
+                            }
+                        } else if (self.drag-type == "scale-y") {
+                            let d-start = self.start-vdist / 1px;
+                            if (d-start > 0.0) {
+                                let curr = abs(self.lmy - self.center-y) / 1px;
+                                root.scale-y-changed(max(0.05, min(4.0, self.start-scale-y * (curr / d-start))));
+                            }
+                        } else if (self.drag-type == "rotate") {
+                            let curr-angle = Math.atan2((self.mouse-y - self.center-y) / 1px, (self.mouse-x - self.center-x) / 1px) / 1deg;
+                            root.rotation-changed(self.start-rotation + (curr-angle - self.start-angle-deg));
                         } else if (self.drag-type == "move") {
-                            let dx-screen = self.mx - self.start-mouse-x;
-                            let dy-screen = self.my - self.start-mouse-y;
-                            
-                            let dx-proj = (dx-screen / 1px) * (nw / disp-w);
-                            let dy-proj = (dy-screen / 1px) * (nh / disp-h);
-                            
+                            let dx-proj = ((self.mouse-x - self.start-mouse-x) / 1px) * (nw / disp-w);
+                            let dy-proj = ((self.mouse-y - self.start-mouse-y) / 1px) * (nh / disp-h);
                             root.position-x-changed(self.start-pos-x + Math.round(dx-proj));
                             root.position-y-changed(self.start-pos-y + Math.round(dy-proj));
                         }

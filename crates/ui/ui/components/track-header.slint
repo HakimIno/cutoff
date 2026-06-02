@@ -1,6 +1,6 @@
 import { Palette } from "../styles/palette.slint";
 import { Theme } from "../styles/theme.slint";
-import { SpeakerIcon, SpeakerMutedIcon, EyeIcon, EyeOffIcon, LockClosedIcon, LockOpenIcon } from "icons.slint";
+import { SpeakerIcon, SpeakerMutedIcon, EyeLineIcon, EyeOffLineIcon, LockClosedIcon, LockOpenIcon } from "icons.slint";
 
 // A small square icon toggle used in the track header (mute / lock).
 component ChipToggle inherits Rectangle {
@@ -120,12 +120,12 @@ export component TrackHeader inherits Rectangle {
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
                 }
-                if !root.is-audio && !root.muted : EyeIcon {
+                if !root.is-audio && !root.muted : EyeLineIcon {
                     icon-color: mute.has-hover ? white : Palette.text-muted;
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
                 }
-                if !root.is-audio && root.muted : EyeOffIcon {
+                if !root.is-audio && root.muted : EyeOffLineIcon {
                     icon-color: white;
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
