@@ -13,6 +13,7 @@ video-merger-core.workspace = true
 
 tokio.workspace = true
 tokio-util.workspace = true
+futures.workspace = true
 async-trait.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
@@ -24,3 +25,4 @@ image.workspace = true
 cpal.workspace = true
 ringbuf.workspace = true
 num_cpus.workspace = true
+wgpu.workspace = true

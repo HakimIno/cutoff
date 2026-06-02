@@ -12,6 +12,8 @@
 //! # Audio mixing
 //! All non-muted audio tracks are mixed together with `amix`.
 
+pub mod gpu;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;

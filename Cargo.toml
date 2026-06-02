@@ -51,6 +51,7 @@ ringbuf = "0.4"
 
 # Performance
 num_cpus = "1.16"
+wgpu = "23"
 
 # UI
 # renderer-skia uses Metal on macOS → supports CADisplayLink / ProMotion 120 Hz.

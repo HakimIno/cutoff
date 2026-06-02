@@ -707,11 +707,16 @@ fn render_loop(
     let mut preview_scale = preview_scale_for(nw, nh);
     let mut width = scaled_dim(nw, preview_scale);
     let mut height = scaled_dim(nh, preview_scale);
-    // Scratch buffer reused by the compositing path so it allocates nothing
-    // per frame; grown on demand inside `render_timeline_frame`.
     let mut canvas: Vec<u8> = Vec::new();
     let mut project_duration_us = project.duration_us();
     let mut frame_interval = Duration::from_secs_f32(fps_den as f32 / fps_num as f32);
+
+    let mut compositor = video_merger_engine::composite::gpu::WgpuCompositor::new()
+        .map_err(|e| {
+            tracing::warn!("GPU Compositor initialization failed, falling back to CPU: {}", e);
+            e
+        })
+        .ok();
 
     loop {
         // Block for control only when fully idle (paused with nothing buffered
@@ -802,6 +807,7 @@ fn render_loop(
 
         let rgba = render_timeline_frame(
             &project, &mut decoders, preview_scale, &mut canvas,
+            compositor.as_mut(),
             render_head_us, width, height,
         );
         let item = PictureItem {
@@ -1086,6 +1092,7 @@ fn render_timeline_frame(
     decoders: &mut HashMap<Uuid, DecoderState>,
     preview_scale: f32,
     canvas: &mut Vec<u8>,
+    compositor: Option<&mut video_merger_engine::composite::gpu::WgpuCompositor>,
     t_us: i64,
     width: u32,
     height: u32,
@@ -1120,27 +1127,75 @@ fn render_timeline_frame(
     if canvas.len() != needed {
         canvas.resize(needed, 0);
     }
+
+    // Collect all successfully decoded frames and their transforms
+    let mut decoded_frames = Vec::new();
+    for (_, tc) in active {
+        let rel_us = t_us - tc.start_us;
+        let src_us = rel_us + tc.clip.trim_in_us();
+        let xf = tc.clip.resolved_transform(rel_us);
+
+        if let Some(state) = decoder_for(decoders, tc, preview_scale) {
+            if let Some(frame) = state.get_frame_at(src_us) {
+                decoded_frames.push((frame, xf));
+            }
+        }
+    }
+
+    // Attempt GPU compositing if supported
+    if let Some(comp) = compositor {
+        let mut gpu_inputs = Vec::new();
+        for (frame, xf) in &decoded_frames {
+            let (crop_l, crop_t, crop_r, crop_b) = match xf.crop {
+                Some(c) => (
+                    (c.left as f32 * preview_scale).round() as usize,
+                    (c.top as f32 * preview_scale).round() as usize,
+                    (c.right as f32 * preview_scale).round() as usize,
+                    (c.bottom as f32 * preview_scale).round() as usize,
+                ),
+                None => (0, 0, 0, 0),
+            };
+
+            let center_x = width as f32 / 2.0 + xf.position_x as f32 * preview_scale;
+            let center_y = height as f32 / 2.0 + xf.position_y as f32 * preview_scale;
+
+            gpu_inputs.push(video_merger_engine::composite::gpu::GpuClipInput {
+                rgba: &frame.rgba,
+                width: frame.width as usize,
+                height: frame.height as usize,
+                crop_l,
+                crop_t,
+                crop_r,
+                crop_b,
+                scale_x: xf.scale_x,
+                scale_y: xf.scale_y,
+                rotation_deg: xf.rotation_deg,
+                flip_h: xf.flip_h,
+                flip_v: xf.flip_v,
+                opacity: xf.opacity,
+                center_x,
+                center_y,
+            });
+        }
+
+        match comp.composite(width as usize, height as usize, canvas.as_mut_slice(), &gpu_inputs) {
+            Ok(()) => {
+                return Arc::from(canvas.as_slice());
+            }
+            Err(e) => {
+                tracing::error!("GPU Compositing failed: {}. Falling back to CPU.", e);
+            }
+        }
+    }
+
+    // CPU Fallback path
     // Reset to opaque black (R=G=B=0, A=255).
     canvas.fill(0);
     for i in (3..canvas.len()).step_by(4) {
         canvas[i] = 255;
     }
 
-    for (_, tc) in active {
-        let rel_us = t_us - tc.start_us;
-        let src_us = rel_us + tc.clip.trim_in_us();
-        let xf = tc.clip.resolved_transform(rel_us);
-
-        let frame = match decoder_for(decoders, tc, preview_scale) {
-            Some(state) => match state.get_frame_at(src_us) {
-                Some(f) => f,
-                None => continue,
-            },
-            None => continue,
-        };
-
-        // Crop is authored in full project-resolution space; scale it to the
-        // (possibly downscaled) preview frame.
+    for (frame, xf) in &decoded_frames {
         let (crop_l, crop_t, crop_r, crop_b) = match xf.crop {
             Some(c) => (
                 (c.left as f32 * preview_scale).round() as usize,
@@ -1151,7 +1206,6 @@ fn render_timeline_frame(
             None => (0, 0, 0, 0),
         };
 
-        // Clip center on the canvas: canvas center + position (full-res → preview).
         let center_x = width as f32 / 2.0 + xf.position_x as f32 * preview_scale;
         let center_y = height as f32 / 2.0 + xf.position_y as f32 * preview_scale;
 
@@ -1288,10 +1342,10 @@ mod perf {
             let mut canvas: Vec<u8> = Vec::new();
             let step = 1_000_000i64 / 30;
             // Warm up the decoder (first frame pays open + seek cost).
-            let _ = render_timeline_frame(&project, &mut decoders, ps, &mut canvas, 0, width, height);
+            let _ = render_timeline_frame(&project, &mut decoders, ps, &mut canvas, None, 0, width, height);
             let stats = bench(frames, |i| {
                 let t = step * i as i64;
-                let _ = render_timeline_frame(&project, &mut decoders, ps, &mut canvas, t, width, height);
+                let _ = render_timeline_frame(&project, &mut decoders, ps, &mut canvas, None, t, width, height);
             });
             report(label, stats);
         }
