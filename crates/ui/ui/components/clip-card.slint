@@ -51,7 +51,10 @@ export component ClipBlock inherits Rectangle {
     callback reveal-in-finder(string);
     callback move-to-track(string, int);
 
-    width: max(min(self.px-per-sec * root.data.duration-secs, 800px), 120px);
+    // Width scales linearly with the zoom (px-per-sec) so cards track the ruler
+    // exactly and zooming in/out actually resizes them. Floor at 28px keeps a
+    // very short clip clickable. Keep in sync with `card_width` in Rust.
+    width: max(self.px-per-sec * root.data.duration-secs, 28px);
     height: 76px;
     border-radius: Theme.radius;
     border-width: 1px;
@@ -176,7 +179,7 @@ export component ClipBlock inherits Rectangle {
         }
     }
 
-    HorizontalLayout {
+    if root.width >= 64px : HorizontalLayout {
         x: Theme.spacing-sm;
         y: 4px;
         width: parent.width - 2 * Theme.spacing-sm;
@@ -206,7 +209,7 @@ export component ClipBlock inherits Rectangle {
         }
     }
 
-    Text {
+    if root.width >= 52px : Text {
         x: Theme.spacing-sm;
         y: parent.height - self.height - 4px;
         text: root.data.duration;
@@ -255,7 +258,8 @@ export component ClipBlock inherits Rectangle {
     }
 
     // Close (×) button absolutely positioned bottom-right, ON TOP of drag-area.
-    IconAction {
+    // Hidden on very narrow cards so it doesn't cover the whole clip.
+    if root.width >= 56px : IconAction {
         x: parent.width - self.width - Theme.spacing-xs;
         y: parent.height - self.height - 4px;
         dim: !drag-area.has-hover && !root.selected;

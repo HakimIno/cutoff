@@ -269,7 +269,7 @@ impl FfmpegMediaDecoder {
                 Pixel::RGBA,
                 self.width,
                 self.height,
-                Flags::BILINEAR,
+                Flags::FAST_BILINEAR,
             )?;
             self.scaler = Some((scaler, src_fmt, src_w, src_h));
         }

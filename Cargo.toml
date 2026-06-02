@@ -53,8 +53,10 @@ ringbuf = "0.4"
 num_cpus = "1.16"
 
 # UI
-slint = { version = "1.8", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "compat-1-2"] }
-slint-build = "1.8"
+# renderer-skia uses Metal on macOS → supports CADisplayLink / ProMotion 120 Hz.
+# renderer-femtovg (OpenGL) was capped at 60 Hz by the macOS compositor.
+slint = { version = "1.16", default-features = false, features = ["std", "backend-winit", "renderer-skia", "compat-1-2"] }
+slint-build = "1.16"
 
 # Workspace-internal
 video-merger-core = { path = "crates/core" }

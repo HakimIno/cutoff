@@ -1,237 +1,208 @@
 import { Palette } from "../styles/palette.slint";
 import { Theme } from "../styles/theme.slint";
 
+// Read-only metadata row (label left, value right).
 component InfoRow inherits Rectangle {
     in property <string> label;
     in property <string> value;
-    in property <color> value-color: Palette.text;
-    height: 24px;
+    height: 28px;
 
     HorizontalLayout {
         alignment: space-between;
         Text {
             text: root.label;
             color: Palette.text-muted;
-            font-size: Theme.font-xs;
-            letter-spacing: 0.5px;
+            font-size: Theme.font-sm;
             vertical-alignment: center;
         }
         Text {
             text: root.value == "" ? "—" : root.value;
-            color: root.value-color;
-            font-size: Theme.font-xs;
-            font-weight: 600;
+            color: Palette.text;
+            font-size: Theme.font-sm;
+            font-weight: 500;
             horizontal-alignment: right;
             vertical-alignment: center;
             overflow: elide;
         }
     }
-
     Rectangle {
         x: 0; y: parent.height - 1px;
         width: 100%; height: 1px;
         background: Palette.border;
-        opacity: 0.3;
+        opacity: 0.4;
     }
 }
 
-component StudioSlider inherits Rectangle {
+// A draggable numeric field: label on the left, value box on the right that
+// you scrub horizontally to change (DaVinci / After Effects style).
+component NumberField inherits Rectangle {
     in property <string> label;
-    in-out property <float> value: 1.0; // 0.0 to 2.0
-    in property <string> unit: "";
-    in property <float> max-val: 2.0;
+    in-out property <float> value;
+    in property <float> minimum: -1000000;
+    in property <float> maximum: 1000000;
+    in property <float> step: 1.0;          // value delta per pixel dragged
+    in property <float> default-value: 0;
+    in property <bool> percent: false;      // display value × 100
+    in property <bool> integer: false;      // display/emit whole numbers
+    in property <string> suffix: "";
     callback changed(float);
 
-    height: 28px;
+    height: 30px;
 
     HorizontalLayout {
-        spacing: Theme.spacing-md;
+        spacing: Theme.spacing-sm;
+
         Text {
             text: root.label;
             color: Palette.text-muted;
-            width: 72px;
-            font-size: Theme.font-xs;
-            font-weight: 600;
+            font-size: Theme.font-sm;
+            width: 66px;
             vertical-alignment: center;
         }
-        // Slider Track Container
+
         Rectangle {
             horizontal-stretch: 1;
-            height: 100%;
+            height: 26px;
+            border-radius: Theme.radius-sm;
+            background: (fld.has-hover || fld.pressed) ? Palette.surface-2 : Palette.surface;
+            border-width: 1px;
+            border-color: fld.pressed ? Palette.accent : Palette.border;
+            animate border-color { duration: 100ms; }
+            animate background { duration: 100ms; }
 
-            // Track Background
-            track-bg := Rectangle {
-                width: 100%;
-                height: 4px;
-                background: Palette.border;
-                border-radius: 2px;
+            Text {
+                x: 10px;
                 y: (parent.height - self.height) / 2;
-
-                // Fill Track
-                Rectangle {
-                    x: 0;
-                    width: parent.width * (root.value / root.max-val);
-                    height: 100%;
-                    background: Palette.accent;
-                    border-radius: 2px;
-                }
-
-                // Handle
-                handle := Rectangle {
-                    x: (parent.width - self.width) * (root.value / root.max-val);
-                    width: 10px; height: 10px;
-                    y: (parent.height - self.height) / 2;
-                    border-radius: 5px;
-                    background: ta.has-hover ? white : Palette.text;
-                    border-width: 1px;
-                    border-color: Palette.border-bright;
-                }
+                text: root.percent
+                    ? Math.round(root.value * 100) + (root.suffix == "" ? "%" : root.suffix)
+                    : (root.integer
+                        ? Math.round(root.value) + root.suffix
+                        : (Math.round(root.value * 10) / 10) + root.suffix);
+                color: Palette.text;
+                font-size: Theme.font-sm;
+                font-weight: 500;
+                vertical-alignment: center;
             }
 
-            ta := TouchArea {
-                width: 100%;
-                height: 100%;
-                mouse-cursor: pointer;
-
+            // Scrub area covers the whole field (declared first so the reset
+            // button below sits on top within its corner).
+            fld := TouchArea {
+                property <float> start-val;
+                mouse-cursor: ew-resize;
                 pointer-event(e) => {
                     if (e.kind == PointerEventKind.down) {
-                        let fraction = self.width > 0px ? max(0.0, min(1.0, self.mouse-x / self.width)) : 0.0;
-                        let new-val = fraction * root.max-val;
-                        root.value = new-val;
-                        root.changed(new-val);
+                        self.start-val = root.value;
                     }
                 }
                 moved => {
                     if (self.pressed) {
-                        let fraction = self.width > 0px ? max(0.0, min(1.0, self.mouse-x / self.width)) : 0.0;
-                        let new-val = fraction * root.max-val;
-                        root.value = new-val;
-                        root.changed(new-val);
+                        let delta = (self.mouse-x - self.pressed-x) / 1px;
+                        let raw = self.start-val + delta * root.step;
+                        let nv = max(root.minimum, min(root.maximum, raw));
+                        root.value = nv;
+                        root.changed(nv);
                     }
                 }
             }
-        }
-        // Text display of value
-        Text {
-            text: Math.round(root.value * 100) + root.unit;
-            color: Palette.text;
-            width: 38px;
-            horizontal-alignment: right;
-            font-size: Theme.font-xs;
-            font-weight: 600;
-            vertical-alignment: center;
-        }
-    }
-}
 
-component StudioToggle inherits Rectangle {
-    in property <string> label;
-    in-out property <bool> checked;
-    callback toggled(bool);
-
-    height: 24px;
-
-    HorizontalLayout {
-        spacing: Theme.spacing-md;
-        Text {
-            text: root.label;
-            color: Palette.text-muted;
-            width: 72px;
-            font-size: Theme.font-xs;
-            font-weight: 600;
-            vertical-alignment: center;
-        }
-        // Toggle Box
-        TouchArea {
-            clicked => {
-                root.checked = !root.checked;
-                root.toggled(root.checked);
-            }
-            HorizontalLayout {
-                spacing: 8px;
-                alignment: start;
+            // Reset affordance — appears on hover, snaps back to default.
+            reset-ta := TouchArea {
+                x: parent.width - self.width;
+                width: 24px;
+                visible: fld.has-hover || self.has-hover;
+                mouse-cursor: pointer;
+                clicked => {
+                    root.value = root.default-value;
+                    root.changed(root.default-value);
+                }
                 Rectangle {
                     width: 16px; height: 16px;
-                    border-radius: Theme.radius-sm;
-                    border-width: 1px;
-                    border-color: root.checked ? Palette.danger : Palette.border;
-                    background: root.checked ? Palette.danger : Palette.surface-3;
+                    x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
-                    animate background { duration: 100ms; }
-                    animate border-color { duration: 100ms; }
-
-                    if root.checked : Text {
-                        text: "✓";
-                        color: white;
-                        font-size: 10px;
-                        font-weight: 900;
+                    border-radius: 8px;
+                    background: reset-ta.has-hover ? Palette.surface-3 : transparent;
+                    Text {
+                        text: "⟲";
+                        color: Palette.text-muted;
+                        font-size: 11px;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
                 }
-                Text {
-                    text: root.checked ? "Muted" : "Active";
-                    color: root.checked ? Palette.danger : Palette.text;
-                    font-size: Theme.font-xs;
-                    font-weight: 600;
-                    vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// Compact pill switch for boolean settings.
+component Switch inherits Rectangle {
+    in property <string> label;
+    in-out property <bool> checked;
+    callback toggled(bool);
+    height: 30px;
+
+    HorizontalLayout {
+        spacing: Theme.spacing-sm;
+        Text {
+            text: root.label;
+            color: Palette.text-muted;
+            font-size: Theme.font-sm;
+            width: 66px;
+            vertical-alignment: center;
+        }
+        Rectangle { horizontal-stretch: 1; }
+        Rectangle {
+            width: 34px; height: 18px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 9px;
+            background: root.checked ? Palette.accent : Palette.surface-3;
+            border-width: 1px;
+            border-color: root.checked ? Palette.accent : Palette.border;
+            animate background { duration: 120ms; }
+            Rectangle {
+                width: 12px; height: 12px;
+                border-radius: 6px;
+                background: white;
+                x: root.checked ? parent.width - self.width - 3px : 3px;
+                y: (parent.height - self.height) / 2;
+                animate x { duration: 120ms; easing: ease-out; }
+            }
+            ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.checked = !root.checked;
+                    root.toggled(root.checked);
                 }
             }
         }
     }
 }
 
-component CollapsibleSection inherits Rectangle {
-    in property <string> title;
-    in-out property <bool> expanded: true;
+// One tab in the Picture/Audio/Info selector.
+component TabItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    callback clicked();
+    height: 32px;
+    horizontal-stretch: 1;
 
-    height: self.expanded ? self.preferred-height : 32px;
-    background: transparent;
-
-    VerticalLayout {
-        spacing: 0px;
-        alignment: start;
-
-        // Header bar
-        Rectangle {
-            height: 32px;
-            background: Palette.surface-2;
-            border-radius: Theme.radius-sm;
-
-            TouchArea {
-                clicked => { root.expanded = !root.expanded; }
-                HorizontalLayout {
-                    padding-left: Theme.spacing-md;
-                    padding-right: Theme.spacing-md;
-                    spacing: Theme.spacing-sm;
-                    alignment: space-between;
-
-                    Text {
-                        text: root.title;
-                        color: Palette.text;
-                        font-size: Theme.font-xs;
-                        font-weight: 700;
-                        letter-spacing: 0.5px;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: root.expanded ? "▼" : "▶";
-                        color: Palette.text-muted;
-                        font-size: Theme.font-xs;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-        }
-
-        // Content Area
-        VerticalLayout {
-            visible: root.expanded;
-            height: root.expanded ? self.preferred-height : 0px;
-            padding-top: Theme.spacing-md;
-            padding-bottom: Theme.spacing-md;
-            @children
-        }
+    Text {
+        text: root.label;
+        color: root.active ? Palette.text : (ta.has-hover ? Palette.text : Palette.text-muted);
+        font-size: Theme.font-sm;
+        font-weight: root.active ? 600 : 400;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+    // Active underline
+    Rectangle {
+        x: 0; y: parent.height - 2px;
+        width: 100%; height: 2px;
+        background: root.active ? Palette.accent : transparent;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
     }
 }
 
@@ -257,9 +228,12 @@ export component DetailsPanel inherits Rectangle {
     callback position-x-changed(int);
     callback position-y-changed(int);
 
-    width: 260px;
+    property <int> active-tab: 0;
+
+    width: 264px;
     background: Palette.surface;
 
+    // Left divider
     Rectangle {
         x: 0; y: 0;
         width: 1px; height: 100%;
@@ -268,27 +242,27 @@ export component DetailsPanel inherits Rectangle {
 
     VerticalLayout {
         padding: Theme.spacing-lg;
-        spacing: Theme.spacing-lg;
+        spacing: Theme.spacing-md;
         alignment: start;
 
+        // Title
         Text {
-            text: "PRO INSPECTOR";
-            color: Palette.text-muted;
-            font-size: Theme.font-xs;
-            letter-spacing: 1.5px;
-            font-weight: 700;
+            text: "Properties";
+            color: Palette.text;
+            font-size: Theme.font-md;
+            font-weight: 600;
         }
 
         if !root.has-selection : VerticalLayout {
-            alignment: start;
             spacing: Theme.spacing-sm;
+            padding-top: Theme.spacing-md;
             Text {
                 text: "No clip selected";
-                color: Palette.text-dim;
+                color: Palette.text-muted;
                 font-size: Theme.font-sm;
             }
             Text {
-                text: "Select a clip in the timeline to customize composite, audio, and details.";
+                text: "Select a clip in the timeline to adjust its transform, audio, and details.";
                 color: Palette.text-dim;
                 font-size: Theme.font-xs;
                 wrap: word-wrap;
@@ -298,145 +272,110 @@ export component DetailsPanel inherits Rectangle {
         if root.has-selection : VerticalLayout {
             spacing: Theme.spacing-md;
 
-            // Clip Name
+            // Clip name
             Text {
                 text: root.selected-name;
-                color: Palette.text;
-                font-size: Theme.font-sm;
-                font-weight: 700;
+                color: Palette.text-muted;
+                font-size: Theme.font-xs;
                 overflow: elide;
-                wrap: word-wrap;
             }
 
-            // Transform Section (Placeholders for UI completeness)
-            CollapsibleSection {
-                title: "COMPOSITING & TRANSFORM";
-                expanded: true;
-                VerticalLayout {
-                    spacing: 8px;
-                    padding-left: Theme.spacing-sm;
-                    padding-right: Theme.spacing-sm;
-                    StudioSlider {
-                        label: "Opacity";
-                        value: root.selected-opacity;
-                        max-val: 1.0;
-                        unit: "%";
-                        changed(o) => { root.opacity-changed(o); }
+            // Tabs
+            Rectangle {
+                height: 32px;
+                Rectangle {
+                    x: 0; y: parent.height - 1px;
+                    width: 100%; height: 1px;
+                    background: Palette.border;
+                }
+                HorizontalLayout {
+                    TabItem {
+                        label: "Picture";
+                        active: root.active-tab == 0;
+                        clicked => { root.active-tab = 0; }
                     }
-                    StudioSlider {
-                        label: "Scale";
-                        value: root.selected-scale;
-                        max-val: 2.0;
-                        unit: "%";
-                        changed(s) => { root.scale-changed(s); }
+                    TabItem {
+                        label: "Audio";
+                        active: root.active-tab == 1;
+                        clicked => { root.active-tab = 1; }
                     }
-                    HorizontalLayout {
-                        spacing: Theme.spacing-sm;
-                        Text {
-                            text: "Position";
-                            color: Palette.text-muted;
-                            font-size: Theme.font-xs;
-                            font-weight: 600;
-                            width: 72px;
-                            vertical-alignment: center;
-                        }
-                        Rectangle {
-                            background: Palette.surface-2;
-                            border-radius: Theme.radius-sm;
-                            height: 24px;
-                            horizontal-stretch: 1;
-                            Text {
-                                text: "X: " + root.selected-position-x + " px";
-                                color: ta-x.pressed ? Palette.accent-2 : (ta-x.has-hover ? Palette.text : Palette.text-muted);
-                                font-size: Theme.font-xs;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                            ta-x := TouchArea {
-                                property <int> start-val: 0;
-                                mouse-cursor: ew-resize;
-                                pointer-event(e) => {
-                                    if (e.kind == PointerEventKind.down) {
-                                        self.start-val = root.selected-position-x;
-                                    }
-                                }
-                                moved => {
-                                    if (self.pressed) {
-                                        let delta = (self.mouse-x - self.pressed-x) / 1px;
-                                        root.position-x-changed(self.start-val + Math.round(delta));
-                                    }
-                                }
-                            }
-                        }
-                        Rectangle {
-                            background: Palette.surface-2;
-                            border-radius: Theme.radius-sm;
-                            height: 24px;
-                            horizontal-stretch: 1;
-                            Text {
-                                text: "Y: " + root.selected-position-y + " px";
-                                color: ta-y.pressed ? Palette.accent-2 : (ta-y.has-hover ? Palette.text : Palette.text-muted);
-                                font-size: Theme.font-xs;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                            ta-y := TouchArea {
-                                property <int> start-val: 0;
-                                mouse-cursor: ew-resize;
-                                pointer-event(e) => {
-                                    if (e.kind == PointerEventKind.down) {
-                                        self.start-val = root.selected-position-y;
-                                    }
-                                }
-                                moved => {
-                                    if (self.pressed) {
-                                        let delta = (self.mouse-x - self.pressed-x) / 1px;
-                                        // dragging horizontally adjusts vertical position (Resolve style)
-                                        root.position-y-changed(self.start-val - Math.round(delta));
-                                    }
-                                }
-                            }
-                        }
+                    TabItem {
+                        label: "Info";
+                        active: root.active-tab == 2;
+                        clicked => { root.active-tab = 2; }
                     }
                 }
             }
 
-            // Audio Section (Interactive)
-            CollapsibleSection {
-                title: "AUDIO SETTINGS";
-                expanded: true;
-                VerticalLayout {
-                    spacing: 8px;
-                    padding-left: Theme.spacing-sm;
-                    padding-right: Theme.spacing-sm;
-                    StudioSlider {
-                        label: "Volume";
-                        value: root.selected-volume;
-                        max-val: 2.0;
-                        unit: "%";
-                        changed(v) => { root.volume-changed(v); }
-                    }
-                    StudioToggle {
-                        label: "Mute Clip";
-                        checked: root.selected-muted;
-                        toggled(m) => { root.muted-changed(m); }
-                    }
+            // ── Picture / Transform ──
+            if root.active-tab == 0 : VerticalLayout {
+                spacing: 4px;
+                NumberField {
+                    label: "Position X";
+                    value: root.selected-position-x;
+                    integer: true;
+                    step: 1.0;
+                    suffix: "";
+                    default-value: 0;
+                    changed(v) => { root.position-x-changed(Math.round(v)); }
+                }
+                NumberField {
+                    label: "Position Y";
+                    value: root.selected-position-y;
+                    integer: true;
+                    step: 1.0;
+                    default-value: 0;
+                    changed(v) => { root.position-y-changed(Math.round(v)); }
+                }
+                NumberField {
+                    label: "Scale";
+                    value: root.selected-scale;
+                    percent: true;
+                    minimum: 0.0;
+                    maximum: 2.0;
+                    step: 0.005;
+                    default-value: 1.0;
+                    changed(v) => { root.scale-changed(v); }
+                }
+                NumberField {
+                    label: "Opacity";
+                    value: root.selected-opacity;
+                    percent: true;
+                    minimum: 0.0;
+                    maximum: 1.0;
+                    step: 0.004;
+                    default-value: 1.0;
+                    changed(v) => { root.opacity-changed(v); }
                 }
             }
 
-            // Info Section (Read-only Metadata)
-            CollapsibleSection {
-                title: "CLIP FILE INFO";
-                expanded: false;
-                VerticalLayout {
-                    spacing: 4px;
-                    padding-left: Theme.spacing-sm;
-                    padding-right: Theme.spacing-sm;
-                    InfoRow { label: "CODEC";      value: root.selected-codec; }
-                    InfoRow { label: "RESOLUTION"; value: root.selected-resolution; }
-                    InfoRow { label: "DURATION";   value: root.selected-duration; }
-                    InfoRow { label: "FRAME RATE"; value: root.selected-fps; }
+            // ── Audio ──
+            if root.active-tab == 1 : VerticalLayout {
+                spacing: 4px;
+                NumberField {
+                    label: "Volume";
+                    value: root.selected-volume;
+                    percent: true;
+                    minimum: 0.0;
+                    maximum: 2.0;
+                    step: 0.005;
+                    default-value: 1.0;
+                    changed(v) => { root.volume-changed(v); }
                 }
+                Switch {
+                    label: "Mute";
+                    checked: root.selected-muted;
+                    toggled(m) => { root.muted-changed(m); }
+                }
+            }
+
+            // ── Info ──
+            if root.active-tab == 2 : VerticalLayout {
+                spacing: 0px;
+                InfoRow { label: "Codec";      value: root.selected-codec; }
+                InfoRow { label: "Resolution"; value: root.selected-resolution; }
+                InfoRow { label: "Duration";   value: root.selected-duration; }
+                InfoRow { label: "Frame rate"; value: root.selected-fps; }
             }
         }
     }

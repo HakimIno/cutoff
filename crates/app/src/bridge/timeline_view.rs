@@ -75,11 +75,15 @@ pub fn total_duration_secs(playlist: &Playlist) -> f32 {
 pub const LANE_PADDING_PX: f32 = 3.0;
 pub const CARD_SPACING_PX: f32 = 1.0;
 
-pub const CARD_MIN_PX: f32 = 120.0;
-pub const CARD_MAX_PX: f32 = 800.0;
+/// Smallest on-screen width a clip card may shrink to, so a very short clip (or
+/// a fully zoomed-out timeline) stays visible and clickable. There is no upper
+/// clamp: width scales linearly with `px_per_sec` so cards always track the
+/// ruler exactly and zooming in/out actually resizes them. Keep in sync with
+/// the `width` binding in `clip-card.slint`.
+pub const CARD_MIN_PX: f32 = 28.0;
 
 pub fn card_width(duration_secs: f32, px_per_sec: f32) -> f32 {
-    (duration_secs * px_per_sec).clamp(CARD_MIN_PX, CARD_MAX_PX)
+    (duration_secs * px_per_sec).max(CARD_MIN_PX)
 }
 
 /// Find a clip by id and return its `(global_idx, track_local_idx, track)`.
@@ -305,12 +309,12 @@ mod tests {
         let (pl, _) = build(&[(0, 10.0), (1, 100.0), (0, 10.0)]);
         let gaps_v1 = gap_positions_in_track(&pl, 6.0, 0);
 
-        // 10s @ 6 px/s clamps to CARD_MIN_PX (120 px) instead of 60 px.
-        // gap0 = 3 (padding); gap1 = 3 + 120 + 1 = 124; gap2 = 124 + 120 + 1 = 245.
+        // 10s @ 6 px/s = 60 px (linear, above CARD_MIN_PX 28 px).
+        // gap0 = 3 (padding); gap1 = 3 + 60 + 1 = 64; gap2 = 64 + 60 + 1 = 125.
         assert_eq!(gaps_v1.len(), 3);
         assert!((gaps_v1[0] - 3.0).abs() < 0.001);
-        assert!((gaps_v1[1] - 124.0).abs() < 0.001);
-        assert!((gaps_v1[2] - 245.0).abs() < 0.001);
+        assert!((gaps_v1[1] - 64.0).abs() < 0.001);
+        assert!((gaps_v1[2] - 125.0).abs() < 0.001);
 
         let gaps_v2 = gap_positions_in_track(&pl, 6.0, 1);
         // V2 has one 100s clip @ 6 px/s = 600 px (within max).
@@ -393,9 +397,10 @@ mod tests {
         // V1A(10), V2X(5), V1B(20), V2Y(8), V1C(15)
         let (pl, ids) = build(&[(0, 10.0), (1, 5.0), (0, 20.0), (1, 8.0), (0, 15.0)]);
         // Drag V1A across V1B's center → should snap to between B and C
-        // (V1 local gap 2). Card widths at 6 px/s all clamp to 120 px;
-        // moving the center 1 full card right is ~121 px.
-        let out = drop_target_for_clip(&pl, 6.0, ids[0], 240.0).unwrap();
+        // (V1 local gap 2). At 6 px/s widths are A=60, B=120, C=90 px; the V1
+        // gaps are [3, 64, 185, 276] and A's center starts at 33, so a ~150 px
+        // drag lands the center next to gap 2 (185).
+        let out = drop_target_for_clip(&pl, 6.0, ids[0], 150.0).unwrap();
         assert_eq!(out.local_gap, 2, "snap between V1B and V1C");
         let (from, to) = out.reorder.unwrap();
         let mut copy = pl.clone();
@@ -446,7 +451,8 @@ mod tests {
         // Source at local index 1: gap 1 (left edge) and gap 2 (right edge)
         // both bracket its own slot → must be a no-op.
         let (pl, ids) = build(&[(0, 10.0), (0, 10.0), (0, 10.0)]);
-        // 60 px = roughly half a clamped card → still within source's own gap.
+        // 60 px ≈ one card (10s @ 6 px/s) → still snaps within the source's
+        // own bracketing gaps, so it must stay a no-op.
         let out = drop_target_for_clip(&pl, 6.0, ids[1], 60.0).unwrap();
         assert!(out.reorder.is_none());
         let out2 = drop_target_for_clip(&pl, 6.0, ids[1], -60.0).unwrap();

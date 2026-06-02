@@ -85,6 +85,7 @@ export component AppWindow inherits Window {
     callback seek-fraction(float);
     callback zoom-in();
     callback zoom-out();
+    callback set-zoom(float);   // absolute px-per-sec value
     callback jump-start();
     callback jump-end();
     callback drag-started(string);
@@ -201,7 +202,17 @@ export component AppWindow inherits Window {
         VerticalLayout {
             spacing: 0px;
 
-            Header {}
+            Header {
+                can-export: root.can-export;
+                exporting: root.exporting;
+                export-clicked => { root.export-clicked(); }
+                save-project => { root.save-project(); }
+                load-project => { root.load-project(); }
+                undo => { root.undo(); }
+                redo => { root.redo(); }
+                zoom-in => { root.zoom-in(); }
+                zoom-out => { root.zoom-out(); }
+            }
 
             HorizontalLayout {
                 spacing: 0px;
@@ -283,6 +294,9 @@ export component AppWindow inherits Window {
                             add-video-track => { root.add-video-track(); }
                             add-audio-track => { root.add-audio-track(); }
                             delete-track(t) => { root.delete-track(t); }
+                            zoom-in => { root.zoom-in(); }
+                            zoom-out => { root.zoom-out(); }
+                            set-zoom(v) => { root.set-zoom(v); }
                         }
                     }
                 }
@@ -317,7 +331,6 @@ export component AppWindow inherits Window {
                 preview-fps: root.preview-fps;
                 playing: root.playing;
                 master-muted: root.master-muted;
-                export-clicked => { root.export-clicked(); }
                 cancel-clicked => { root.cancel-clicked(); }
             }
         }

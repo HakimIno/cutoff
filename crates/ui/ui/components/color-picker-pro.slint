@@ -1,0 +1,390 @@
+import { Palette } from "../styles/palette.slint";
+import { Theme } from "../styles/theme.slint";
+import { LineEdit } from "std-widgets.slint";
+
+component FineNumber inherits Rectangle {
+    in property <string> label;
+    in property <string> suffix: "";
+    in property <bool> integer: false;
+    in property <float> minimum: 0;
+    in property <float> maximum: 1;
+    in property <float> step: 0.01;
+    in-out property <float> value;
+    callback changed(float);
+
+    height: 22px;
+
+    HorizontalLayout {
+        spacing: 4px;
+
+        Text {
+            width: 18px;
+            text: root.label;
+            color: Palette.text-muted;
+            font-size: Theme.font-xs;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            height: 20px;
+            border-radius: Theme.radius-sm;
+            background: scrub.has-hover || scrub.pressed ? Palette.surface-2 : Palette.surface;
+            border-width: 1px;
+            border-color: scrub.pressed ? Palette.accent : Palette.border;
+            animate background { duration: 100ms; }
+            animate border-color { duration: 100ms; }
+
+            Text {
+                x: 7px;
+                y: (parent.height - self.height) / 2;
+                text: root.integer
+                    ? Math.round(root.value) + root.suffix
+                    : (Math.round(root.value * 1000) / 1000) + root.suffix;
+                color: Palette.text;
+                font-size: Theme.font-xs;
+                font-weight: 500;
+            }
+
+            scrub := TouchArea {
+                property <float> start-value;
+                mouse-cursor: ew-resize;
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down) {
+                        self.start-value = root.value;
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        let delta = (self.mouse-x - self.pressed-x) / 1px;
+                        let next = max(root.minimum, min(root.maximum, self.start-value + delta * root.step));
+                        root.value = next;
+                        root.changed(next);
+                    }
+                }
+            }
+        }
+    }
+}
+
+component ColorSlider inherits Rectangle {
+    in property <brush> fill;
+    in property <float> position;
+    callback changed(float);
+
+    height: 12px;
+    border-radius: Theme.radius-sm;
+    clip: true;
+    background: root.fill;
+    border-width: 1px;
+    border-color: Palette.border;
+
+    Rectangle {
+        x: max(0px, min(parent.width - self.width, root.position * parent.width - self.width / 2));
+        y: -2px;
+        width: 7px;
+        height: parent.height + 4px;
+        border-radius: 4px;
+        background: transparent;
+        border-width: 2px;
+        border-color: white;
+        drop-shadow-blur: 4px;
+        drop-shadow-color: #000000aa;
+    }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            if (self.width > 0px) {
+                root.changed(max(0, min(1, self.pressed-x / self.width)));
+            }
+        }
+        moved => {
+            if (self.pressed && self.width > 0px) {
+                root.changed(max(0, min(1, self.mouse-x / self.width)));
+            }
+        }
+    }
+}
+
+component SectionLabel inherits Text {
+    in property <string> caption;
+    text: root.caption;
+    color: Palette.text-dim;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+}
+
+export component ColorPickerPro inherits Rectangle {
+    in-out property <color> selected-color: white;
+    in-out property <string> hex-code: "#ffffff";
+    in property <bool> show-hex-input: true;
+
+    callback color-changed(color);
+    callback hsva-changed(float, float, float, float);
+    callback rgba-changed(int, int, int, int);
+    callback hex-edited(string);
+
+    property <float> hue: root.selected-color.to-hsv().hue;
+    property <float> saturation: root.selected-color.to-hsv().saturation;
+    property <float> value: root.selected-color.to-hsv().value;
+    property <float> alpha: root.selected-color.to-hsv().alpha;
+    property <int> red: root.selected-color.red;
+    property <int> green: root.selected-color.green;
+    property <int> blue: root.selected-color.blue;
+    property <int> alpha-byte: root.selected-color.alpha;
+    property <color> hue-color: Colors.hsv(root.hue, 1, 1);
+
+    function commit-color(c: color) {
+        root.selected-color = c;
+        root.color-changed(c);
+        root.hsva-changed(c.to-hsv().hue, c.to-hsv().saturation, c.to-hsv().value, c.to-hsv().alpha);
+        root.rgba-changed(c.red, c.green, c.blue, c.alpha);
+    }
+
+    function set-hsva(h: float, s: float, v: float, a: float) {
+        let nh = max(0, min(360, h));
+        let ns = max(0, min(1, s));
+        let nv = max(0, min(1, v));
+        let na = max(0, min(1, a));
+        root.commit-color(Colors.hsv(nh, ns, nv, na));
+    }
+
+    function set-rgba(r: int, g: int, b: int, a: int) {
+        let nr = max(0, min(255, r));
+        let ng = max(0, min(255, g));
+        let nb = max(0, min(255, b));
+        let na = max(0, min(255, a));
+        root.commit-color(rgba(nr, ng, nb, na));
+    }
+
+    width: 278px;
+    height: 348px;
+    background: Palette.surface;
+    border-width: 1px;
+    border-color: Palette.border-bright;
+    border-radius: Theme.radius;
+    drop-shadow-blur: 24px;
+    drop-shadow-color: #00000066;
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: 7px;
+
+        HorizontalLayout {
+            height: 28px;
+            spacing: Theme.spacing-sm;
+
+            Rectangle {
+                width: 28px;
+                height: 28px;
+                border-radius: Theme.radius-sm;
+                background: root.selected-color;
+                border-width: 1px;
+                border-color: Palette.border-bright;
+            }
+
+            VerticalLayout {
+                spacing: 2px;
+                Text {
+                    text: "Pro Color";
+                    color: Palette.text;
+                    font-size: Theme.font-sm;
+                    font-weight: 700;
+                }
+                Text {
+                    text: "HSV / RGBA precision";
+                    color: Palette.text-dim;
+                    font-size: 9px;
+                }
+            }
+        }
+
+        Rectangle {
+            height: 112px;
+            border-radius: Theme.radius;
+            clip: true;
+            background: root.hue-color;
+            border-width: 1px;
+            border-color: Palette.border;
+
+            Rectangle {
+                background: @linear-gradient(90deg, white 0%, transparent 100%);
+            }
+
+            Rectangle {
+                background: @linear-gradient(180deg, transparent 0%, black 100%);
+            }
+
+            Rectangle {
+                x: max(0px, min(parent.width - self.width, root.saturation * parent.width - self.width / 2));
+                y: max(0px, min(parent.height - self.height, (1 - root.value) * parent.height - self.height / 2));
+                width: 14px;
+                height: 14px;
+                border-radius: 7px;
+                background: transparent;
+                border-width: 2px;
+                border-color: white;
+                drop-shadow-blur: 5px;
+                drop-shadow-color: #000000cc;
+            }
+
+            sv-ta := TouchArea {
+                mouse-cursor: crosshair;
+                clicked => {
+                    if (self.width > 0px && self.height > 0px) {
+                        root.set-hsva(
+                            root.hue,
+                            max(0, min(1, self.pressed-x / self.width)),
+                            max(0, min(1, 1 - self.pressed-y / self.height)),
+                            root.alpha
+                        );
+                    }
+                }
+                moved => {
+                    if (self.pressed && self.width > 0px && self.height > 0px) {
+                        root.set-hsva(
+                            root.hue,
+                            max(0, min(1, self.mouse-x / self.width)),
+                            max(0, min(1, 1 - self.mouse-y / self.height)),
+                            root.alpha
+                        );
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 3px;
+
+            SectionLabel { caption: "HUE"; }
+            ColorSlider {
+                position: root.hue / 360;
+                fill: @linear-gradient(90deg,
+                    #ff0000 0%, #ffff00 16.667%, #00ff00 33.333%,
+                    #00ffff 50%, #0000ff 66.667%, #ff00ff 83.333%, #ff0000 100%);
+                changed(v) => { root.set-hsva(v * 360, root.saturation, root.value, root.alpha); }
+            }
+
+            SectionLabel { caption: "ALPHA"; }
+            ColorSlider {
+                position: root.alpha;
+                fill: @linear-gradient(90deg, root.selected-color.with-alpha(0) 0%, root.selected-color.with-alpha(1) 100%);
+                changed(v) => { root.set-hsva(root.hue, root.saturation, root.value, v); }
+            }
+        }
+
+        if root.show-hex-input : Rectangle {
+            height: 26px;
+            border-radius: Theme.radius-sm;
+            background: Palette.surface-2;
+            border-width: 1px;
+            border-color: hex.has-focus ? Palette.accent : Palette.border;
+            animate border-color { duration: 100ms; }
+
+            hex := LineEdit {
+                x: 8px;
+                y: 2px;
+                width: parent.width - 16px;
+                height: parent.height - 4px;
+                text: root.hex-code;
+                font-size: Theme.font-xs;
+                edited(value) => {
+                    root.hex-code = value;
+                    root.hex-edited(value);
+                }
+                accepted(value) => {
+                    root.hex-code = value;
+                    root.hex-edited(value);
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+
+            VerticalLayout {
+                spacing: 3px;
+                horizontal-stretch: 1;
+                SectionLabel { caption: "RGBA"; }
+                FineNumber {
+                    label: "R";
+                    value: root.red;
+                    minimum: 0;
+                    maximum: 255;
+                    step: 1;
+                    integer: true;
+                    changed(v) => { root.set-rgba(Math.round(v), root.green, root.blue, root.alpha-byte); }
+                }
+                FineNumber {
+                    label: "G";
+                    value: root.green;
+                    minimum: 0;
+                    maximum: 255;
+                    step: 1;
+                    integer: true;
+                    changed(v) => { root.set-rgba(root.red, Math.round(v), root.blue, root.alpha-byte); }
+                }
+                FineNumber {
+                    label: "B";
+                    value: root.blue;
+                    minimum: 0;
+                    maximum: 255;
+                    step: 1;
+                    integer: true;
+                    changed(v) => { root.set-rgba(root.red, root.green, Math.round(v), root.alpha-byte); }
+                }
+                FineNumber {
+                    label: "A";
+                    value: root.alpha-byte;
+                    minimum: 0;
+                    maximum: 255;
+                    step: 1;
+                    integer: true;
+                    changed(v) => { root.set-rgba(root.red, root.green, root.blue, Math.round(v)); }
+                }
+            }
+
+            VerticalLayout {
+                spacing: 3px;
+                horizontal-stretch: 1;
+                SectionLabel { caption: "HSVA"; }
+                FineNumber {
+                    label: "H";
+                    suffix: "°";
+                    value: root.hue;
+                    minimum: 0;
+                    maximum: 360;
+                    step: 0.25;
+                    changed(v) => { root.set-hsva(v, root.saturation, root.value, root.alpha); }
+                }
+                FineNumber {
+                    label: "S";
+                    value: root.saturation;
+                    minimum: 0;
+                    maximum: 1;
+                    step: 0.002;
+                    changed(v) => { root.set-hsva(root.hue, v, root.value, root.alpha); }
+                }
+                FineNumber {
+                    label: "V";
+                    value: root.value;
+                    minimum: 0;
+                    maximum: 1;
+                    step: 0.002;
+                    changed(v) => { root.set-hsva(root.hue, root.saturation, v, root.alpha); }
+                }
+                FineNumber {
+                    label: "α";
+                    value: root.alpha;
+                    minimum: 0;
+                    maximum: 1;
+                    step: 0.002;
+                    changed(v) => { root.set-hsva(root.hue, root.saturation, root.value, v); }
+                }
+            }
+        }
+    }
+}

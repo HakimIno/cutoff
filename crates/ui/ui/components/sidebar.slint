@@ -17,7 +17,6 @@ component StatRow inherits Rectangle {
             text: root.label;
             color: Palette.text-muted;
             font-size: Theme.font-xs;
-            letter-spacing: 0.5px;
             vertical-alignment: center;
         }
         Text {
@@ -47,16 +46,19 @@ component PrimaryButton inherits Rectangle {
     in property <string> label;
     callback clicked();
     height: 32px;
-    border-radius: Theme.radius;
-    background: ta.has-hover ? Palette.accent-2 : Palette.accent;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: ta.has-hover ? Palette.border-bright : Palette.border;
+    background: ta.has-hover ? Palette.surface-2 : Palette.surface;
     animate background { duration: 120ms; }
+    animate border-color { duration: 120ms; }
 
-    ta := TouchArea { clicked => { root.clicked(); } }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
     Text {
         text: root.label;
-        color: white;
+        color: Palette.text;
         font-size: Theme.font-sm;
-        font-weight: 600;
+        font-weight: 500;
         horizontal-alignment: center;
         vertical-alignment: center;
     }
@@ -185,7 +187,7 @@ export component Sidebar inherits Rectangle {
             HorizontalLayout {
                 padding: Theme.spacing-lg;
                 PrimaryButton {
-                    label: "+  Add Clips";
+                    label: "+  Import";
                     clicked => { root.add-clicked(); }
                 }
             }
@@ -201,15 +203,14 @@ export component Sidebar inherits Rectangle {
                 padding-right: Theme.spacing-lg;
                 alignment: space-between;
                 Text {
-                    text: "MEDIA LIBRARY";
-                    color: Palette.text-muted;
-                    font-size: Theme.font-xs;
-                    font-weight: 700;
-                    letter-spacing: 1px;
+                    text: "Assets";
+                    color: Palette.text;
+                    font-size: Theme.font-sm;
+                    font-weight: 600;
                     vertical-alignment: center;
                 }
                 Text {
-                    text: root.clips.length + " clips";
+                    text: root.clips.length + (root.clips.length == 1 ? " item" : " items");
                     color: Palette.text-dim;
                     font-size: Theme.font-xs;
                     vertical-alignment: center;
@@ -250,15 +251,15 @@ export component Sidebar inherits Rectangle {
                 alignment: end;
 
                 StatRow {
-                    label: "TOTAL DURATION";
+                    label: "Total duration";
                     value: root.total-duration == "" ? "00:00" : root.total-duration;
                 }
                 StatRow {
-                    label: "STRATEGY";
+                    label: "Strategy";
                     value: root.merge-strategy == "" ? "—" : root.merge-strategy;
                 }
                 StatRow {
-                    label: "EXPORT QUALITY";
+                    label: "Export quality";
                     value: root.quality-label;
                 }
             }

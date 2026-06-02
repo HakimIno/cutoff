@@ -68,6 +68,30 @@ component TrackLane inherits Rectangle {
     }
 }
 
+// Small square +/− button for the zoom cluster.
+component ZoomButton inherits Rectangle {
+    in property <string> glyph;
+    callback clicked();
+    width: 22px;
+    height: 22px;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: ta.has-hover ? Palette.border-bright : Palette.border;
+    background: ta.has-hover ? Palette.surface-2 : transparent;
+    animate background { duration: 100ms; }
+    Text {
+        text: root.glyph;
+        color: Palette.text-muted;
+        font-size: 14px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 export component Timeline inherits Rectangle {
     in property <[TrackData]> tracks;
     in property <[ClipData]> all-clips;     // used only for empty-state check
@@ -97,8 +121,16 @@ export component Timeline inherits Rectangle {
     callback add-video-track();
     callback add-audio-track();
     callback delete-track(int);
+    callback zoom-in();
+    callback zoom-out();
+    callback set-zoom(float);   // absolute px-per-sec value
 
     background: Palette.background;
+
+    // Current zoom expressed as a 0..1 slider fraction (linear over the
+    // 1..200 px-per-sec range the Rust side clamps to).
+    property <float> zoom-fraction:
+        max(0.0, min(1.0, (root.px-per-sec / 1px - 1.0) / 199.0));
 
     // Per-lane visual height.
     property <length> lane-height: 80px;
@@ -120,23 +152,80 @@ export component Timeline inherits Rectangle {
         alignment: start;
 
         HorizontalLayout {
-            spacing: Theme.spacing-md;
-            alignment: space-between;
+            spacing: Theme.spacing-sm;
             Text {
-                text: "TIMELINE";
-                color: Palette.text-muted;
-                font-size: Theme.font-xs;
-                letter-spacing: 1.5px;
-                font-weight: 700;
+                text: "Timeline";
+                color: Palette.text;
+                font-size: Theme.font-sm;
+                font-weight: 600;
                 vertical-alignment: center;
             }
             Text {
                 text: root.all-clips.length == 0
                     ? "Empty"
-                    : root.all-clips.length + " clips · " + root.tracks.length + " tracks · right-click track header to delete";
+                    : root.all-clips.length + (root.all-clips.length == 1 ? " clip · " : " clips · ") + root.tracks.length + " tracks";
                 color: Palette.text-dim;
                 font-size: Theme.font-xs;
                 vertical-alignment: center;
+            }
+
+            // Spacer pushes the zoom cluster to the right edge.
+            Rectangle { horizontal-stretch: 1; }
+
+            // ── Zoom cluster ──
+            ZoomButton {
+                glyph: "−";
+                clicked => { root.zoom-out(); }
+            }
+            // Slider track
+            Rectangle {
+                width: 104px;
+                height: 22px;
+                zoom-track := Rectangle {
+                    width: 100%;
+                    height: 4px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 2px;
+                    background: Palette.surface-3;
+                    Rectangle {
+                        x: 0;
+                        width: parent.width * root.zoom-fraction;
+                        height: 100%;
+                        border-radius: 2px;
+                        background: Palette.accent;
+                    }
+                    Rectangle {
+                        width: 11px;
+                        height: 11px;
+                        border-radius: 6px;
+                        x: (parent.width - self.width) * root.zoom-fraction;
+                        y: (parent.height - self.height) / 2;
+                        background: zoom-ta.has-hover || zoom-ta.pressed ? white : Palette.text;
+                        border-width: 1px;
+                        border-color: Palette.border-bright;
+                    }
+                }
+                zoom-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    width: 100%;
+                    height: 100%;
+                    moved => {
+                        if (self.pressed && self.width > 0px) {
+                            let f = max(0.0, min(1.0, self.mouse-x / self.width));
+                            root.set-zoom(1.0 + f * 199.0);
+                        }
+                    }
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down && self.width > 0px) {
+                            let f = max(0.0, min(1.0, self.mouse-x / self.width));
+                            root.set-zoom(1.0 + f * 199.0);
+                        }
+                    }
+                }
+            }
+            ZoomButton {
+                glyph: "+";
+                clicked => { root.zoom-in(); }
             }
         }
 
@@ -233,7 +322,7 @@ export component Timeline inherits Rectangle {
                             horizontal-alignment: center;
                         }
                         Text {
-                            text: "Click  +  Add Clips  or drop a video onto the window";
+                            text: "Click  Import  or drop a video onto the window";
                             color: Palette.text-dim;
                             font-size: Theme.font-xs;
                             horizontal-alignment: center;

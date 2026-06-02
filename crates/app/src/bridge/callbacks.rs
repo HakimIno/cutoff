@@ -98,6 +98,12 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         window.on_zoom_out(move || on_zoom(weak.clone(), pl.clone(), zoom.clone(), 1.0 / 1.5));
     }
     {
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let zoom = state.zoom.clone();
+        window.on_set_zoom(move |px_per_sec| on_set_zoom(weak.clone(), pl.clone(), zoom.clone(), px_per_sec));
+    }
+    {
         let tx = cmd_tx.clone();
         let pv = state.preview.clone();
         window.on_jump_start(move || on_jump(tx.clone(), pv.clone(), JumpTo::Start));
@@ -774,6 +780,25 @@ fn on_zoom(
     let new_zoom = {
         let mut z = zoom.lock().expect("zoom mutex poisoned");
         *z = (*z * factor).clamp(ZOOM_MIN, ZOOM_MAX);
+        *z
+    };
+    if let Some(window) = weak.upgrade() {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        timeline_view::refresh_ruler(&window, &pl, new_zoom);
+    }
+}
+
+/// Set the timeline zoom to an absolute `px_per_sec` value (from the zoom
+/// slider), clamped to the supported range, and refresh the ruler.
+fn on_set_zoom(
+    weak: Weak<AppWindow>,
+    playlist: SharedPlaylist,
+    zoom: SharedZoom,
+    px_per_sec: f32,
+) {
+    let new_zoom = {
+        let mut z = zoom.lock().expect("zoom mutex poisoned");
+        *z = px_per_sec.clamp(ZOOM_MIN, ZOOM_MAX);
         *z
     };
     if let Some(window) = weak.upgrade() {

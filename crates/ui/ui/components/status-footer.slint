@@ -45,10 +45,9 @@ export component StatusFooter inherits Rectangle {
     in property <bool> playing;
     in property <bool> master-muted;
 
-    callback export-clicked();
     callback cancel-clicked();
 
-    height: 74px;
+    height: 60px;
     background: Palette.surface;
 
     Rectangle {
@@ -110,13 +109,8 @@ export component StatusFooter inherits Rectangle {
                     font-weight: 600;
                 }
                 ActionButton {
-                    label: "▶  Export";
-                    primary: true;
-                    enabled-state: root.can-export && !root.exporting;
-                    clicked => { root.export-clicked(); }
-                }
-                ActionButton {
-                    label: "Cancel";
+                    label: "Cancel Export";
+                    visible: root.exporting;
                     danger: root.exporting;
                     enabled-state: root.exporting;
                     clicked => { root.cancel-clicked(); }

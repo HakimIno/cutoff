@@ -600,15 +600,32 @@ fn audio_loop(
 
 // ── Preview metadata ──────────────────────────────────────────────────────
 
+/// Upper bound on the preview's effective frame rate. A display refreshes at
+/// ~60Hz and the UI coalesces frames it can't paint in time, so producing more
+/// than this many frames per second only burns swscale + GPU-download + memcpy
+/// on frames that are discarded before they ever reach the screen. Capping a
+/// 120/240fps source here roughly halves (or quarters) the render thread's
+/// per-second work with no visible change. Export is unaffected — it renders
+/// every source frame at full resolution through a separate path.
+const PREVIEW_MAX_FPS: i32 = 60;
+
 /// Native `(width, height, fps_num, fps_den)` of the preview, taken from the
 /// first clip in the project (falling back to 1280×720@30 for an empty one).
+/// The frame rate is clamped to [`PREVIEW_MAX_FPS`].
 fn preview_meta(project: &Project) -> (u32, u32, i32, i32) {
     if let Some(clip) = project.all_clips().next() {
+        let den = 1000;
+        let mut num = clip.info.profile.frame_rate_mhz as i32;
+        // Don't render faster than the display can show; the extra frames are
+        // coalesced away by the UI anyway (see the doc on PREVIEW_MAX_FPS).
+        if num > PREVIEW_MAX_FPS * den {
+            num = PREVIEW_MAX_FPS * den;
+        }
         (
             clip.info.profile.resolution.width,
             clip.info.profile.resolution.height,
-            clip.info.profile.frame_rate_mhz as i32,
-            1000,
+            num,
+            den,
         )
     } else {
         (1280, 720, 30, 1)
