@@ -1,16 +1,25 @@
 //! Background preview-playback threads.
 //!
 //! Each preview session owns:
-//!   * a **video thread** that decodes frames and paces delivery to the UI
-//!     using the audio clock (or wall-clock fallback);
+//!   * a **render thread** (producer) that decodes + composites timeline frames
+//!     ahead of playback and pushes them into a bounded picture queue;
+//!   * a **present thread** (consumer) that paces delivery of those frames to
+//!     the UI using the audio clock (or wall-clock fallback) — it never decodes,
+//!     so its cadence stays steady even when per-frame decode time jitters;
 //!   * an **audio thread** (optional) that
 //!     owns the `!Send` cpal `Stream` and feeds the ring buffer continuously.
 //!
-//! Coordination is by `std::sync::mpsc` control channels + the shared
+//! Splitting decode (render) from present is what keeps playback at a steady
+//! frame rate: the bounded queue absorbs decode-time variance, and a shared
+//! generation counter discards frames rendered for a position that a seek or
+//! project change has since abandoned.
+//!
+//! Coordination is by `std::sync::mpsc` control channels, the bounded picture
+//! `sync_channel`, a shared `Arc<AtomicU64>` picture generation, and the shared
 //! `Arc<AtomicU32>` audio clock from `AudioOutput`.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -59,14 +68,43 @@ pub enum PreviewCtrl {
     UpdateProject(Project),
 }
 
+/// How many decoded/composited frames the render thread may stay ahead of the
+/// present thread. This bounded buffer is what absorbs per-frame decode jitter
+/// (a slow keyframe-distance decode followed by fast ones) so the present
+/// thread can emit a steady cadence — at the cost of `DEPTH × frame_interval`
+/// of latency (~100–200ms at 30–60fps), which a bounded queue keeps in check.
+const PICTURE_QUEUE_DEPTH: usize = 6;
+
 // ── Internal per-thread message types ─────────────────────────────────────
 
-enum VideoCtrl {
+/// Control messages for the **render** (producer) thread.
+enum RenderCtrl {
     Play,
     Pause,
-    Seek(i64),
+    /// Jump the render head to `pts_us` and adopt picture-generation `gen`
+    /// (frames pushed afterwards are tagged with it). Renders one frame at the
+    /// new position immediately so paused scrubbing stays responsive.
+    Seek { pts_us: i64, gen: u64 },
     Stop,
-    UpdateProject(Project),
+    UpdateProject { project: Project, gen: u64 },
+}
+
+/// Control messages for the **present** (consumer/pacing) thread.
+enum PresentCtrl {
+    Play,
+    Pause,
+    Seek { pts_us: i64, gen: u64 },
+    Stop,
+    UpdateProject { project: Project, gen: u64 },
+}
+
+/// A composited timeline frame in the render→present picture queue, tagged with
+/// the picture generation it belongs to. A seek/project-change bumps the shared
+/// generation; the present thread drops any item whose generation no longer
+/// matches, so frames rendered for a now-abandoned position never reach screen.
+struct PictureItem {
+    gen: u64,
+    frame: DecodedFrame,
 }
 
 enum AudioCtrl {
@@ -80,9 +118,16 @@ enum AudioCtrl {
 }
 
 pub struct PreviewHandle {
-    video_tx: std_mpsc::Sender<VideoCtrl>,
+    render_tx: std_mpsc::Sender<RenderCtrl>,
+    present_tx: std_mpsc::Sender<PresentCtrl>,
     audio_tx: Option<std_mpsc::Sender<AudioCtrl>>,
-    _video_join: thread::JoinHandle<()>,
+    /// Shared picture-generation counter. Bumped here (before the control
+    /// messages are sent) on every seek/project change so both downstream
+    /// threads adopt the same new generation and stale in-flight frames are
+    /// dropped. See [`PictureItem`].
+    generation: Arc<AtomicU64>,
+    _render_join: thread::JoinHandle<()>,
+    _present_join: thread::JoinHandle<()>,
     _audio_join: Option<thread::JoinHandle<()>>,
 }
 
@@ -90,25 +135,32 @@ impl PreviewHandle {
     pub fn send(&self, ctrl: PreviewCtrl) {
         match ctrl {
             PreviewCtrl::Play => {
-                let _ = self.video_tx.send(VideoCtrl::Play);
+                let _ = self.render_tx.send(RenderCtrl::Play);
+                let _ = self.present_tx.send(PresentCtrl::Play);
                 if let Some(tx) = &self.audio_tx {
                     let _ = tx.send(AudioCtrl::Play);
                 }
             }
             PreviewCtrl::Pause => {
-                let _ = self.video_tx.send(VideoCtrl::Pause);
+                let _ = self.render_tx.send(RenderCtrl::Pause);
+                let _ = self.present_tx.send(PresentCtrl::Pause);
                 if let Some(tx) = &self.audio_tx {
                     let _ = tx.send(AudioCtrl::Pause);
                 }
             }
             PreviewCtrl::Seek { pts_us } => {
-                let _ = self.video_tx.send(VideoCtrl::Seek(pts_us));
+                // Bump the generation *before* notifying the threads so both see
+                // the new value and discard frames from the old position.
+                let gen = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+                let _ = self.render_tx.send(RenderCtrl::Seek { pts_us, gen });
+                let _ = self.present_tx.send(PresentCtrl::Seek { pts_us, gen });
                 if let Some(tx) = &self.audio_tx {
                     let _ = tx.send(AudioCtrl::Seek(pts_us));
                 }
             }
             PreviewCtrl::Stop => {
-                let _ = self.video_tx.send(VideoCtrl::Stop);
+                let _ = self.render_tx.send(RenderCtrl::Stop);
+                let _ = self.present_tx.send(PresentCtrl::Stop);
                 if let Some(tx) = &self.audio_tx {
                     let _ = tx.send(AudioCtrl::Stop);
                 }
@@ -124,7 +176,13 @@ impl PreviewHandle {
                 }
             }
             PreviewCtrl::UpdateProject(project) => {
-                let _ = self.video_tx.send(VideoCtrl::UpdateProject(project.clone()));
+                let gen = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+                let _ = self
+                    .render_tx
+                    .send(RenderCtrl::UpdateProject { project: project.clone(), gen });
+                let _ = self
+                    .present_tx
+                    .send(PresentCtrl::UpdateProject { project: project.clone(), gen });
                 if let Some(tx) = &self.audio_tx {
                     let _ = tx.send(AudioCtrl::UpdateProject(project));
                 }
@@ -155,19 +213,43 @@ pub fn spawn_preview(
         }
     };
 
-    let (video_tx, video_rx) = std_mpsc::channel::<VideoCtrl>();
-    let proj_v = project;
-    let video_join = thread::Builder::new()
-        .name("cutoff-preview-video".into())
+    let generation = Arc::new(AtomicU64::new(0));
+
+    // Bounded picture queue: render (producer) → present (consumer). A full
+    // queue back-pressures the render thread so it stays at most
+    // `PICTURE_QUEUE_DEPTH` frames ahead instead of decoding unboundedly.
+    let (pic_tx, pic_rx) = std_mpsc::sync_channel::<PictureItem>(PICTURE_QUEUE_DEPTH);
+
+    let (render_tx, render_rx) = std_mpsc::channel::<RenderCtrl>();
+    let (present_tx, present_rx) = std_mpsc::channel::<PresentCtrl>();
+
+    // The present thread can ask the render thread to resync (jump forward to
+    // the audio clock) when decode falls behind, so it holds a render sender.
+    let render_tx_for_present = render_tx.clone();
+
+    let proj_r = project.clone();
+    let gen_r = generation.clone();
+    let render_join = thread::Builder::new()
+        .name("cutoff-preview-render".into())
+        .spawn(move || render_loop(proj_r, render_rx, pic_tx, gen_r))
+        .expect("render preview thread spawn");
+
+    let proj_p = project;
+    let gen_p = generation.clone();
+    let present_join = thread::Builder::new()
+        .name("cutoff-preview-present".into())
         .spawn(move || {
-            video_loop(proj_v, video_rx, event_tx, audio_clock);
+            present_loop(proj_p, present_rx, pic_rx, render_tx_for_present, event_tx, audio_clock, gen_p);
         })
-        .expect("video preview thread spawn");
+        .expect("present preview thread spawn");
 
     PreviewHandle {
-        video_tx,
+        render_tx,
+        present_tx,
         audio_tx,
-        _video_join: video_join,
+        generation,
+        _render_join: render_join,
+        _present_join: present_join,
         _audio_join: audio_join,
     }
 }
@@ -516,71 +598,65 @@ fn audio_loop(
     }
 }
 
-// ── Video Thread Loop ─────────────────────────────────────────────────────
+// ── Preview metadata ──────────────────────────────────────────────────────
 
-fn video_loop(
+/// Native `(width, height, fps_num, fps_den)` of the preview, taken from the
+/// first clip in the project (falling back to 1280×720@30 for an empty one).
+fn preview_meta(project: &Project) -> (u32, u32, i32, i32) {
+    if let Some(clip) = project.all_clips().next() {
+        (
+            clip.info.profile.resolution.width,
+            clip.info.profile.resolution.height,
+            clip.info.profile.frame_rate_mhz as i32,
+            1000,
+        )
+    } else {
+        (1280, 720, 30, 1)
+    }
+}
+
+// ── Render Thread Loop (producer) ─────────────────────────────────────────
+
+/// Decode + composite timeline frames *ahead* of playback and push them into
+/// the bounded picture queue. This thread does all the heavy lifting (decode →
+/// GPU download → swscale → composite); decoupling it from the present thread
+/// is what lets a steady cadence be emitted even when per-frame decode time
+/// jitters. Back-pressure from a full queue keeps it only `PICTURE_QUEUE_DEPTH`
+/// frames ahead.
+fn render_loop(
     mut project: Project,
-    ctrl_rx: std_mpsc::Receiver<VideoCtrl>,
-    event_tx: tokio_mpsc::UnboundedSender<Event>,
-    audio_clock: Option<Arc<AtomicU32>>,
+    ctrl_rx: std_mpsc::Receiver<RenderCtrl>,
+    pic_tx: std_mpsc::SyncSender<PictureItem>,
+    generation: Arc<AtomicU64>,
 ) {
     let mut decoders: HashMap<Uuid, DecoderState> = HashMap::new();
     let mut playing = false;
-    let mut last_delivered_pts_us: i64 = 0;
-    let mut clock_anchor: Option<(u32, i64)> = None;
+    // Timeline position of the next frame to render.
+    let mut render_head_us: i64 = 0;
+    // Generation the rendered frames belong to; adopted from each seek/update.
+    let mut my_gen: u64 = generation.load(Ordering::Acquire);
+    // Render exactly one frame after a seek even while paused, so scrubbing
+    // shows the new position without resuming playback.
+    let mut force_one = false;
+    // A frame that was rendered but couldn't be enqueued (queue full); retried
+    // before rendering anything new so we never decode the same frame twice.
+    let mut pending_out: Option<PictureItem> = None;
 
-    let get_preview_meta = |proj: &Project| {
-        if let Some(clip) = proj.all_clips().next() {
-            (
-                clip.info.profile.resolution.width,
-                clip.info.profile.resolution.height,
-                clip.info.profile.frame_rate_mhz as i32,
-                1000,
-            )
-        } else {
-            (1280, 720, 30, 1)
-        }
-    };
-
-    let (native_w, native_h, mut fps_num, mut fps_den) = get_preview_meta(&project);
-    let mut preview_scale = preview_scale_for(native_w, native_h);
-    let mut width = scaled_dim(native_w, preview_scale);
-    let mut height = scaled_dim(native_h, preview_scale);
+    let (nw, nh, mut fps_num, mut fps_den) = preview_meta(&project);
+    let mut preview_scale = preview_scale_for(nw, nh);
+    let mut width = scaled_dim(nw, preview_scale);
+    let mut height = scaled_dim(nh, preview_scale);
     // Scratch buffer reused by the compositing path so it allocates nothing
     // per frame; grown on demand inside `render_timeline_frame`.
     let mut canvas: Vec<u8> = Vec::new();
     let mut project_duration_us = project.duration_us();
     let mut frame_interval = Duration::from_secs_f32(fps_den as f32 / fps_num as f32);
-    let mut next_frame_due = Instant::now();
-
-    // Send initial PreviewOpened event
-    let _ = event_tx.send(Event::PreviewOpened {
-        clip_id: Uuid::nil(),
-        duration_us: project_duration_us,
-        width,
-        height,
-        frame_rate_num: fps_num,
-        frame_rate_den: fps_den,
-    });
-
-    // Send initial black frame
-    let mut initial_rgba = vec![0u8; (width * height * 4) as usize];
-    for i in (0..initial_rgba.len()).step_by(4) {
-        initial_rgba[i + 3] = 255;
-    }
-    let frame = DecodedFrame {
-        width,
-        height,
-        pts_us: 0,
-        rgba: initial_rgba.into(),
-    };
-    let _ = event_tx.send(Event::FrameReady {
-        clip_id: Uuid::nil(),
-        frame,
-    });
 
     loop {
-        let first_ctrl = if playing {
+        // Block for control only when fully idle (paused with nothing buffered
+        // to flush and no scrub frame owed); otherwise poll so we stay producing.
+        let busy = playing || pending_out.is_some() || force_one;
+        let first_ctrl = if busy {
             match ctrl_rx.try_recv() {
                 Ok(c) => Some(c),
                 Err(std_mpsc::TryRecvError::Empty) => None,
@@ -596,52 +672,32 @@ fn video_loop(
         let mut maybe = first_ctrl;
         while let Some(ctrl) = maybe.take() {
             match ctrl {
-                VideoCtrl::Play => {
-                    playing = true;
-                    next_frame_due = Instant::now();
-                    clock_anchor = None;
+                RenderCtrl::Play => playing = true,
+                RenderCtrl::Pause => playing = false,
+                RenderCtrl::Seek { pts_us, gen } => {
+                    my_gen = gen;
+                    render_head_us = pts_us.clamp(0, project_duration_us.max(0));
+                    // Drop a stale buffered frame and render one at the new spot.
+                    pending_out = None;
+                    force_one = true;
                 }
-                VideoCtrl::Pause => {
-                    playing = false;
-                    clock_anchor = None;
-                }
-                VideoCtrl::Seek(pts_us) => {
-                    last_delivered_pts_us = pts_us.clamp(0, project_duration_us.max(0));
-                    clock_anchor = None;
-                    next_frame_due = Instant::now();
-
-                    // Render seeker frame immediately
-                    let rgba = render_timeline_frame(
-                        &project, &mut decoders, preview_scale, &mut canvas,
-                        last_delivered_pts_us, width, height,
-                    );
-                    let frame = DecodedFrame {
-                        width,
-                        height,
-                        pts_us: last_delivered_pts_us,
-                        rgba,
-                    };
-                    let _ = event_tx.send(Event::FrameReady {
-                        clip_id: Uuid::nil(),
-                        frame,
-                    });
-                }
-                VideoCtrl::Stop => {
-                    let _ = event_tx.send(Event::PreviewEnded { clip_id: Uuid::nil() });
-                    return;
-                }
-                VideoCtrl::UpdateProject(proj) => {
+                RenderCtrl::Stop => return,
+                RenderCtrl::UpdateProject { project: proj, gen } => {
+                    my_gen = gen;
                     project = proj;
                     project_duration_us = project.duration_us();
-                    let (nw, nh, fn_val, fd_val) = get_preview_meta(&project);
+                    let (nw, nh, fn_val, fd_val) = preview_meta(&project);
                     preview_scale = preview_scale_for(nw, nh);
                     width = scaled_dim(nw, preview_scale);
                     height = scaled_dim(nh, preview_scale);
                     fps_num = fn_val;
                     fps_den = fd_val;
                     frame_interval = Duration::from_secs_f32(fps_den as f32 / fps_num as f32);
+                    pending_out = None;
+                    force_one = true;
 
-                    let active_ids: std::collections::HashSet<Uuid> = project.all_clips().map(|c| c.id).collect();
+                    let active_ids: std::collections::HashSet<Uuid> =
+                        project.all_clips().map(|c| c.id).collect();
                     decoders.retain(|id, _| active_ids.contains(id));
                 }
             }
@@ -652,7 +708,183 @@ fn video_loop(
             }
         }
 
+        // Retry a previously-rendered-but-unsent frame first (queue was full).
+        if let Some(item) = pending_out.take() {
+            match pic_tx.try_send(item) {
+                Ok(()) => {
+                    if playing {
+                        render_head_us += frame_interval.as_micros() as i64;
+                    }
+                    force_one = false;
+                }
+                Err(std_mpsc::TrySendError::Full(item)) => {
+                    pending_out = Some(item);
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(std_mpsc::TrySendError::Disconnected(_)) => return,
+            }
+            continue;
+        }
+
+        // Nothing to do unless playing or a scrub frame is owed.
+        if !playing && !force_one {
+            continue;
+        }
+
+        // Stop producing at end of timeline; the present thread emits the
+        // PreviewEnded once its clock crosses the duration.
+        if render_head_us >= project_duration_us {
+            playing = false;
+            force_one = false;
+            continue;
+        }
+
+        let rgba = render_timeline_frame(
+            &project, &mut decoders, preview_scale, &mut canvas,
+            render_head_us, width, height,
+        );
+        let item = PictureItem {
+            gen: my_gen,
+            frame: DecodedFrame { width, height, pts_us: render_head_us, rgba },
+        };
+        match pic_tx.try_send(item) {
+            Ok(()) => {
+                if playing {
+                    render_head_us += frame_interval.as_micros() as i64;
+                }
+                force_one = false;
+            }
+            Err(std_mpsc::TrySendError::Full(item)) => {
+                pending_out = Some(item);
+                thread::sleep(Duration::from_millis(2));
+            }
+            Err(std_mpsc::TrySendError::Disconnected(_)) => return,
+        }
+    }
+}
+
+// ── Present Thread Loop (consumer / pacing) ───────────────────────────────
+
+/// Pace delivery of already-rendered frames to the UI using the audio clock
+/// (or wall-clock fallback). This thread never decodes — it only pulls frames
+/// from the picture queue, so its cadence is steady regardless of decode jitter.
+fn present_loop(
+    mut project: Project,
+    ctrl_rx: std_mpsc::Receiver<PresentCtrl>,
+    pic_rx: std_mpsc::Receiver<PictureItem>,
+    render_tx: std_mpsc::Sender<RenderCtrl>,
+    event_tx: tokio_mpsc::UnboundedSender<Event>,
+    audio_clock: Option<Arc<AtomicU32>>,
+    generation: Arc<AtomicU64>,
+) {
+    let mut playing = false;
+    let mut last_delivered_pts_us: i64 = 0;
+    let mut clock_anchor: Option<(u32, i64)> = None;
+    // Picture generation we currently accept; bumped on seek/update/resync.
+    let mut cur_gen: u64 = generation.load(Ordering::Acquire);
+    // One look-ahead frame held across ticks (the queue has no peek), so a
+    // not-yet-due future frame is never lost.
+    let mut pending: Option<PictureItem> = None;
+    // Timeline time of the last resync request, to rate-limit them.
+    let mut last_resync_us: i64 = i64::MIN;
+
+    let (nw, nh, mut fps_num, mut fps_den) = preview_meta(&project);
+    // Only needed for the initial PreviewOpened + black frame; afterwards the
+    // present thread forwards queue frames, which carry their own dimensions.
+    let width = scaled_dim(nw, preview_scale_for(nw, nh));
+    let height = scaled_dim(nh, preview_scale_for(nw, nh));
+    let mut project_duration_us = project.duration_us();
+    let mut frame_interval = Duration::from_secs_f32(fps_den as f32 / fps_num as f32);
+    let mut next_frame_due = Instant::now();
+
+    let _ = event_tx.send(Event::PreviewOpened {
+        clip_id: Uuid::nil(),
+        duration_us: project_duration_us,
+        width,
+        height,
+        frame_rate_num: fps_num,
+        frame_rate_den: fps_den,
+    });
+
+    // Initial black frame.
+    let mut initial_rgba = vec![0u8; (width * height * 4) as usize];
+    for i in (0..initial_rgba.len()).step_by(4) {
+        initial_rgba[i + 3] = 255;
+    }
+    let _ = event_tx.send(Event::FrameReady {
+        clip_id: Uuid::nil(),
+        frame: DecodedFrame { width, height, pts_us: 0, rgba: initial_rgba.into() },
+    });
+
+    loop {
+        // When paused we still wake periodically to surface scrub frames the
+        // render thread pushes after a seek; when playing we poll without
+        // blocking and let the pacing logic below set the cadence.
+        let first_ctrl = if playing {
+            match ctrl_rx.try_recv() {
+                Ok(c) => Some(c),
+                Err(std_mpsc::TryRecvError::Empty) => None,
+                Err(std_mpsc::TryRecvError::Disconnected) => return,
+            }
+        } else {
+            match ctrl_rx.recv_timeout(Duration::from_millis(16)) {
+                Ok(c) => Some(c),
+                Err(std_mpsc::RecvTimeoutError::Timeout) => None,
+                Err(std_mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+        };
+
+        let mut maybe = first_ctrl;
+        while let Some(ctrl) = maybe.take() {
+            match ctrl {
+                PresentCtrl::Play => {
+                    playing = true;
+                    next_frame_due = Instant::now();
+                    clock_anchor = None;
+                }
+                PresentCtrl::Pause => {
+                    playing = false;
+                    clock_anchor = None;
+                }
+                PresentCtrl::Seek { pts_us, gen } => {
+                    cur_gen = gen;
+                    last_delivered_pts_us = pts_us.clamp(0, project_duration_us.max(0));
+                    clock_anchor = None;
+                    next_frame_due = Instant::now();
+                    last_resync_us = i64::MIN;
+                    pending = None; // drop frames from the old position
+                }
+                PresentCtrl::Stop => {
+                    let _ = event_tx.send(Event::PreviewEnded { clip_id: Uuid::nil() });
+                    return;
+                }
+                PresentCtrl::UpdateProject { project: proj, gen } => {
+                    cur_gen = gen;
+                    project = proj;
+                    project_duration_us = project.duration_us();
+                    let (_, _, fn_val, fd_val) = preview_meta(&project);
+                    fps_num = fn_val;
+                    fps_den = fd_val;
+                    frame_interval = Duration::from_secs_f32(fps_den as f32 / fps_num as f32);
+                    pending = None;
+                }
+            }
+            match ctrl_rx.try_recv() {
+                Ok(c) => maybe = Some(c),
+                Err(std_mpsc::TryRecvError::Empty) => break,
+                Err(std_mpsc::TryRecvError::Disconnected) => return,
+            }
+        }
+
         if !playing {
+            // Paused: surface the latest valid frame (e.g. a scrub result),
+            // ignoring pacing. `take_frame` with `None` returns the newest.
+            if let Some(frame) = take_frame(&pic_rx, cur_gen, &mut pending, None) {
+                last_delivered_pts_us = frame.pts_us;
+                if event_tx.send(Event::FrameReady { clip_id: Uuid::nil(), frame }).is_err() {
+                    return;
+                }
+            }
             continue;
         }
 
@@ -677,38 +909,33 @@ fn video_loop(
                 continue;
             }
 
-            if target_local_us - last_delivered_pts_us > 200_000 {
-                // Audio is far ahead (or we seeked), skip to target_local_us
-                last_delivered_pts_us = target_local_us;
+            // Deliver the newest buffered frame whose pts has come due.
+            if let Some(frame) = take_frame(&pic_rx, cur_gen, &mut pending, Some(target_local_us)) {
+                last_delivered_pts_us = frame.pts_us;
+                if event_tx.send(Event::FrameReady { clip_id: Uuid::nil(), frame }).is_err() {
+                    return;
+                }
             }
 
-            let frame_duration_us = frame_interval.as_micros() as i64;
-            let time_since_last_frame = target_local_us - last_delivered_pts_us;
-            if time_since_last_frame < frame_duration_us {
-                let wait_us = frame_duration_us - time_since_last_frame;
-                thread::sleep(Duration::from_micros((wait_us.min(10_000)) as u64));
-                continue;
+            // If video has fallen far behind the audio clock (decode can't keep
+            // up), ask the render thread to jump forward to the clock so we
+            // resync instead of grinding through frames that are already late.
+            if target_local_us - last_delivered_pts_us > 250_000
+                && target_local_us - last_resync_us > 250_000
+            {
+                let gen = generation.fetch_add(1, Ordering::AcqRel) + 1;
+                cur_gen = gen;
+                pending = None;
+                last_resync_us = target_local_us;
+                let _ = render_tx.send(RenderCtrl::Seek { pts_us: target_local_us, gen });
             }
 
-            // Render and send frame
-            let rgba = render_timeline_frame(
-                &project, &mut decoders, preview_scale, &mut canvas,
-                target_local_us, width, height,
-            );
-            let frame = DecodedFrame {
-                width,
-                height,
-                pts_us: target_local_us,
-                rgba,
-            };
-            last_delivered_pts_us = target_local_us;
-            if event_tx.send(Event::FrameReady { clip_id: Uuid::nil(), frame }).is_err() {
-                return;
-            }
+            // Sleep until roughly the next frame boundary to avoid busy-waiting.
+            thread::sleep(Duration::from_millis(2));
             continue;
         }
 
-        // Fallback: Wall-clock pacing
+        // Fallback: wall-clock pacing (no audio output).
         let now = Instant::now();
         if now < next_frame_due {
             thread::sleep(next_frame_due - now);
@@ -722,21 +949,47 @@ fn video_loop(
             continue;
         }
 
-        let rgba = render_timeline_frame(
-            &project, &mut decoders, preview_scale, &mut canvas,
-            target_local_us, width, height,
-        );
-        let frame = DecodedFrame {
-            width,
-            height,
-            pts_us: target_local_us,
-            rgba,
-        };
-        last_delivered_pts_us = target_local_us;
-        if event_tx.send(Event::FrameReady { clip_id: Uuid::nil(), frame }).is_err() {
-            return;
+        if let Some(frame) = take_frame(&pic_rx, cur_gen, &mut pending, Some(target_local_us)) {
+            last_delivered_pts_us = frame.pts_us;
+            if event_tx.send(Event::FrameReady { clip_id: Uuid::nil(), frame }).is_err() {
+                return;
+            }
         }
     }
+}
+
+/// Pull frames from the picture queue, dropping any whose generation no longer
+/// matches `cur_gen`, and return the newest one that is *due*:
+///   * `target = Some(t)` → the latest frame with `pts_us <= t` (a not-yet-due
+///     frame is kept in `pending` for a later tick);
+///   * `target = None` → the newest available valid frame (used while paused).
+/// Returns `None` when nothing valid/due is buffered.
+fn take_frame(
+    pic_rx: &std_mpsc::Receiver<PictureItem>,
+    cur_gen: u64,
+    pending: &mut Option<PictureItem>,
+    target: Option<i64>,
+) -> Option<DecodedFrame> {
+    let mut chosen: Option<DecodedFrame> = None;
+    loop {
+        if pending.is_none() {
+            match pic_rx.try_recv() {
+                Ok(item) if item.gen == cur_gen => *pending = Some(item),
+                Ok(_) => continue, // stale generation → drop and keep draining
+                Err(_) => break,
+            }
+        }
+        let due = match target {
+            Some(t) => pending.as_ref().unwrap().frame.pts_us <= t,
+            None => true,
+        };
+        if due {
+            chosen = Some(pending.take().unwrap().frame);
+        } else {
+            break;
+        }
+    }
+    chosen
 }
 
 /// Get a warm decoder for `tc`, opening (and caching) one on first use.
