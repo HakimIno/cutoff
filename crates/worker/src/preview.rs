@@ -26,6 +26,28 @@ use video_merger_engine::decoder::{FfmpegMediaDecoder, MediaDecoder, DecodedFram
 
 use crate::job::Event;
 
+/// Longest preview-canvas side, in pixels. Source frames whose longest side
+/// exceeds this are decoded+composited downscaled so 4K/8K timelines stay
+/// smooth; everything the user sees is bounded by the preview panel anyway.
+/// Export is unaffected — it renders at full resolution.
+const PREVIEW_MAX_DIM: u32 = 1280;
+
+/// Downscale factor (≤ 1.0) that fits a `w×h` source within [`PREVIEW_MAX_DIM`].
+fn preview_scale_for(w: u32, h: u32) -> f32 {
+    let longest = w.max(h);
+    if longest > PREVIEW_MAX_DIM {
+        PREVIEW_MAX_DIM as f32 / longest as f32
+    } else {
+        1.0
+    }
+}
+
+/// Apply `scale` to a dimension, clamped to an even value ≥ 2 (matches the
+/// even-size rounding the decoder uses, so canvas and frames stay aligned).
+fn scaled_dim(v: u32, scale: f32) -> u32 {
+    (((v as f32 * scale).round() as u32).max(2)) & !1
+}
+
 #[derive(Debug)]
 pub enum PreviewCtrl {
     Play,
@@ -525,7 +547,10 @@ fn video_loop(
         }
     };
 
-    let (mut width, mut height, mut fps_num, mut fps_den) = get_preview_meta(&project);
+    let (native_w, native_h, mut fps_num, mut fps_den) = get_preview_meta(&project);
+    let mut preview_scale = preview_scale_for(native_w, native_h);
+    let mut width = scaled_dim(native_w, preview_scale);
+    let mut height = scaled_dim(native_h, preview_scale);
     let mut project_duration_us = project.duration_us();
     let mut frame_interval = Duration::from_secs_f32(fps_den as f32 / fps_num as f32);
     let mut next_frame_due = Instant::now();
@@ -588,7 +613,7 @@ fn video_loop(
                     next_frame_due = Instant::now();
 
                     // Render seeker frame immediately
-                    let mut session = VideoSession { project: project.clone(), decoders };
+                    let mut session = VideoSession { project: project.clone(), decoders, preview_scale };
                     let rgba = render_timeline_frame(&mut session, last_delivered_pts_us, width, height);
                     decoders = session.decoders;
                     let frame = DecodedFrame {
@@ -609,9 +634,10 @@ fn video_loop(
                 VideoCtrl::UpdateProject(proj) => {
                     project = proj;
                     project_duration_us = project.duration_us();
-                    let (w, h, fn_val, fd_val) = get_preview_meta(&project);
-                    width = w;
-                    height = h;
+                    let (nw, nh, fn_val, fd_val) = get_preview_meta(&project);
+                    preview_scale = preview_scale_for(nw, nh);
+                    width = scaled_dim(nw, preview_scale);
+                    height = scaled_dim(nh, preview_scale);
                     fps_num = fn_val;
                     fps_den = fd_val;
                     frame_interval = Duration::from_secs_f32(fps_den as f32 / fps_num as f32);
@@ -666,7 +692,7 @@ fn video_loop(
             }
 
             // Render and send frame
-            let mut session = VideoSession { project: project.clone(), decoders };
+            let mut session = VideoSession { project: project.clone(), decoders, preview_scale };
             let rgba = render_timeline_frame(&mut session, target_local_us, width, height);
             decoders = session.decoders;
             let frame = DecodedFrame {
@@ -696,7 +722,7 @@ fn video_loop(
             continue;
         }
 
-        let mut session = VideoSession { project: project.clone(), decoders };
+        let mut session = VideoSession { project: project.clone(), decoders, preview_scale };
         let rgba = render_timeline_frame(&mut session, target_local_us, width, height);
         decoders = session.decoders;
         let frame = DecodedFrame {
@@ -715,6 +741,9 @@ fn video_loop(
 struct VideoSession {
     project: Project,
     decoders: HashMap<Uuid, DecoderState>,
+    /// Factor applied to every decoded clip and to clip positions so the whole
+    /// composite renders at the (possibly downscaled) preview canvas size.
+    preview_scale: f32,
 }
 
 fn render_timeline_frame(
@@ -723,6 +752,7 @@ fn render_timeline_frame(
     width: u32,
     height: u32,
 ) -> Vec<u8> {
+    let preview_scale = session.preview_scale;
     let mut canvas = vec![0u8; (width * height * 4) as usize];
     for i in (0..canvas.len()).step_by(4) {
         canvas[i + 3] = 255;
@@ -747,7 +777,7 @@ fn render_timeline_frame(
         let state = match session.decoders.get_mut(&tc.clip.id) {
             Some(s) => s,
             None => {
-                match FfmpegMediaDecoder::open(&tc.clip.path) {
+                match FfmpegMediaDecoder::open_scaled(&tc.clip.path, preview_scale) {
                     Ok(dec) => {
                         session.decoders.insert(tc.clip.id, DecoderState::new(dec));
                         session.decoders.get_mut(&tc.clip.id).unwrap()
@@ -770,8 +800,10 @@ fn render_timeline_frame(
             
             let center_offset_x = (width as i32 - overlay_w as i32) / 2;
             let center_offset_y = (height as i32 - overlay_h as i32) / 2;
-            let offset_x = tc.clip.position_x + center_offset_x;
-            let offset_y = tc.clip.position_y + center_offset_y;
+            // Clip positions are authored in full project-resolution space, so
+            // scale them to match the (possibly downscaled) preview canvas.
+            let offset_x = (tc.clip.position_x as f32 * preview_scale).round() as i32 + center_offset_x;
+            let offset_y = (tc.clip.position_y as f32 * preview_scale).round() as i32 + center_offset_y;
             
             if overlay_w != frame.width as usize || overlay_h != frame.height as usize {
                 let mut resized = vec![0u8; overlay_w * overlay_h * 4];
