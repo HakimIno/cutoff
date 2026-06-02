@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use slint::{ComponentHandle, Image, SharedPixelBuffer, SharedString, Weak};
@@ -22,10 +24,29 @@ pub fn install(
     state: BridgeState,
 ) {
     let weak: Weak<AppWindow> = window.as_weak();
+    // Preview-frame coalescing. A UI that can't keep up must never let frames
+    // pile up in the event loop (that turns into ever-growing latency), but it
+    // also must always end on the newest frame — otherwise a seek/scrub whose
+    // final frame lands while the UI is busy would leave a stale image on
+    // screen. So we keep only the latest undelivered frame in `latest_frame`
+    // (newer overwrites older) and run at most one drain at a time.
+    let latest_frame: Arc<Mutex<Option<Event>>> = Arc::new(Mutex::new(None));
+    let frame_in_flight = Arc::new(AtomicBool::new(false));
+
     std::thread::Builder::new()
         .name("ui-event-bridge".into())
         .spawn(move || {
             while let Some(event) = event_rx.blocking_recv() {
+                if matches!(event, Event::FrameReady { .. }) {
+                    // Stash as the latest frame, dropping any prior undelivered
+                    // one, then start a drain if one isn't already running.
+                    *latest_frame.lock().expect("latest_frame poisoned") = Some(event);
+                    if !frame_in_flight.swap(true, Ordering::AcqRel) {
+                        schedule_frame_drain(&weak, &state, &cmd_tx, &latest_frame, &frame_in_flight);
+                    }
+                    continue;
+                }
+                // Non-frame events are applied in order, as before.
                 let weak = weak.clone();
                 let st = state.clone();
                 let tx = cmd_tx.clone();
@@ -37,6 +58,49 @@ pub fn install(
             }
         })
         .expect("ui-event-bridge thread");
+}
+
+/// Post a UI-thread task that paints the latest preview frame, then keeps
+/// painting as long as newer frames keep arriving. Exactly one drain runs at a
+/// time (gated by `frame_in_flight`); intermediate frames are coalesced away.
+fn schedule_frame_drain(
+    weak: &Weak<AppWindow>,
+    state: &BridgeState,
+    cmd_tx: &mpsc::Sender<Command>,
+    latest_frame: &Arc<Mutex<Option<Event>>>,
+    frame_in_flight: &Arc<AtomicBool>,
+) {
+    let weak = weak.clone();
+    let st = state.clone();
+    let tx = cmd_tx.clone();
+    let latest = latest_frame.clone();
+    let in_flight = frame_in_flight.clone();
+    let posted = slint::invoke_from_event_loop(move || loop {
+        let next = latest.lock().expect("latest_frame poisoned").take();
+        match next {
+            Some(event) => {
+                if let Some(window) = weak.upgrade() {
+                    apply(&window, event, &st, &tx);
+                }
+            }
+            None => {
+                in_flight.store(false, Ordering::Release);
+                // A frame may have been stashed between the `take()` above and
+                // this store; re-claim the drain so it isn't left stranded.
+                if latest.lock().expect("latest_frame poisoned").is_some()
+                    && !in_flight.swap(true, Ordering::AcqRel)
+                {
+                    continue;
+                }
+                break;
+            }
+        }
+    });
+    // If the event loop is gone the drain never runs; clear the flag so we
+    // don't wedge future frames (harmless during shutdown).
+    if posted.is_err() {
+        frame_in_flight.store(false, Ordering::Release);
+    }
 }
 
 fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::Sender<Command>) {

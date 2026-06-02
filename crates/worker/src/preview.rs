@@ -189,14 +189,12 @@ impl DecoderState {
 
     fn get_frame_at(&mut self, target_us: i64) -> Option<DecodedFrame> {
         let threshold_us = 200_000; // 200ms
-        
+
         let needs_seek = match self.last_pts_us {
             None => true,
-            Some(last) => {
-                target_us < last || target_us - last > threshold_us
-            }
+            Some(last) => target_us < last || target_us - last > threshold_us,
         };
-        
+
         if needs_seek {
             if let Err(e) = self.decoder.seek_to_us(target_us) {
                 tracing::warn!("Seek failed: {}", e);
@@ -204,30 +202,27 @@ impl DecoderState {
             }
             self.last_pts_us = None;
         }
-        
-        let mut best_frame: Option<DecodedFrame> = None;
+
+        // Decode forward cheaply (no GPU download / swscale) until we reach the
+        // target time, then convert only the frame we actually display. This is
+        // what lets preview keep up with high-fps 4K sources: skipped frames
+        // cost a bare decode, not a full RGBA conversion.
         loop {
-            match self.decoder.next_frame() {
-                Ok(Some(frame)) => {
-                    self.last_pts_us = Some(frame.pts_us);
-                    if frame.pts_us >= target_us {
-                        if let Some(prev) = best_frame {
-                            if (target_us - prev.pts_us).abs() < (frame.pts_us - target_us).abs() {
-                                return Some(prev);
-                            }
-                        }
-                        return Some(frame);
+            match self.decoder.decode_next() {
+                Ok(Some(pts_us)) => {
+                    self.last_pts_us = Some(pts_us);
+                    if pts_us >= target_us {
+                        return self.decoder.convert_current().ok();
                     }
-                    best_frame = Some(frame);
                 }
-                Ok(None) => break,
+                // EOF: show the last decoded frame (e.g. the tail of a clip).
+                Ok(None) => return self.decoder.convert_current().ok(),
                 Err(e) => {
                     tracing::warn!("Decode frame failed: {}", e);
-                    break;
+                    return None;
                 }
             }
         }
-        best_frame
     }
 }
 
@@ -551,6 +546,9 @@ fn video_loop(
     let mut preview_scale = preview_scale_for(native_w, native_h);
     let mut width = scaled_dim(native_w, preview_scale);
     let mut height = scaled_dim(native_h, preview_scale);
+    // Scratch buffer reused by the compositing path so it allocates nothing
+    // per frame; grown on demand inside `render_timeline_frame`.
+    let mut canvas: Vec<u8> = Vec::new();
     let mut project_duration_us = project.duration_us();
     let mut frame_interval = Duration::from_secs_f32(fps_den as f32 / fps_num as f32);
     let mut next_frame_due = Instant::now();
@@ -613,14 +611,15 @@ fn video_loop(
                     next_frame_due = Instant::now();
 
                     // Render seeker frame immediately
-                    let mut session = VideoSession { project: project.clone(), decoders, preview_scale };
-                    let rgba = render_timeline_frame(&mut session, last_delivered_pts_us, width, height);
-                    decoders = session.decoders;
+                    let rgba = render_timeline_frame(
+                        &project, &mut decoders, preview_scale, &mut canvas,
+                        last_delivered_pts_us, width, height,
+                    );
                     let frame = DecodedFrame {
                         width,
                         height,
                         pts_us: last_delivered_pts_us,
-                        rgba: rgba.into(),
+                        rgba,
                     };
                     let _ = event_tx.send(Event::FrameReady {
                         clip_id: Uuid::nil(),
@@ -692,14 +691,15 @@ fn video_loop(
             }
 
             // Render and send frame
-            let mut session = VideoSession { project: project.clone(), decoders, preview_scale };
-            let rgba = render_timeline_frame(&mut session, target_local_us, width, height);
-            decoders = session.decoders;
+            let rgba = render_timeline_frame(
+                &project, &mut decoders, preview_scale, &mut canvas,
+                target_local_us, width, height,
+            );
             let frame = DecodedFrame {
                 width,
                 height,
                 pts_us: target_local_us,
-                rgba: rgba.into(),
+                rgba,
             };
             last_delivered_pts_us = target_local_us;
             if event_tx.send(Event::FrameReady { clip_id: Uuid::nil(), frame }).is_err() {
@@ -722,14 +722,15 @@ fn video_loop(
             continue;
         }
 
-        let mut session = VideoSession { project: project.clone(), decoders, preview_scale };
-        let rgba = render_timeline_frame(&mut session, target_local_us, width, height);
-        decoders = session.decoders;
+        let rgba = render_timeline_frame(
+            &project, &mut decoders, preview_scale, &mut canvas,
+            target_local_us, width, height,
+        );
         let frame = DecodedFrame {
             width,
             height,
             pts_us: target_local_us,
-            rgba: rgba.into(),
+            rgba,
         };
         last_delivered_pts_us = target_local_us;
         if event_tx.send(Event::FrameReady { clip_id: Uuid::nil(), frame }).is_err() {
@@ -738,102 +739,117 @@ fn video_loop(
     }
 }
 
-struct VideoSession {
-    project: Project,
-    decoders: HashMap<Uuid, DecoderState>,
-    /// Factor applied to every decoded clip and to clip positions so the whole
-    /// composite renders at the (possibly downscaled) preview canvas size.
+/// Get a warm decoder for `tc`, opening (and caching) one on first use.
+/// Returns `None` only when the file cannot be opened.
+fn decoder_for<'a>(
+    decoders: &'a mut HashMap<Uuid, DecoderState>,
+    tc: &TrackClip,
     preview_scale: f32,
+) -> Option<&'a mut DecoderState> {
+    if !decoders.contains_key(&tc.clip.id) {
+        match FfmpegMediaDecoder::open_scaled(&tc.clip.path, preview_scale) {
+            Ok(dec) => {
+                decoders.insert(tc.clip.id, DecoderState::new(dec));
+            }
+            Err(e) => {
+                tracing::warn!("Failed to open video decoder for clip {}: {}", tc.clip.id, e);
+                return None;
+            }
+        }
+    }
+    decoders.get_mut(&tc.clip.id)
 }
 
+/// Render the composited timeline frame at `t_us`.
+///
+/// Returns the RGBA buffer as an `Arc<[u8]>`. `canvas` is a scratch buffer
+/// reused across frames so the compositing path allocates nothing per frame.
+/// The fast path (a single opaque, untransformed, full-canvas clip — the common
+/// single-clip preview case) bypasses the canvas entirely and forwards the
+/// decoder's own RGBA buffer with zero copy.
 fn render_timeline_frame(
-    session: &mut VideoSession,
+    project: &Project,
+    decoders: &mut HashMap<Uuid, DecoderState>,
+    preview_scale: f32,
+    canvas: &mut Vec<u8>,
     t_us: i64,
     width: u32,
     height: u32,
-) -> Vec<u8> {
-    let preview_scale = session.preview_scale;
-    let mut canvas = vec![0u8; (width * height * 4) as usize];
-    for i in (0..canvas.len()).step_by(4) {
-        canvas[i + 3] = 255;
-    }
-    let mut active = video_merger_engine::composite::active_clips_at(&session.project, t_us);
-    
-    active.sort_by_key(|(track_idx, _)| {
-        let name = &session.project.tracks[*track_idx].name;
-        match name.as_str() {
-            "V1" => 0,
-            "V2" => 1,
-            _ => 0,
-        }
+) -> Arc<[u8]> {
+    let mut active = video_merger_engine::composite::active_clips_at(project, t_us);
+    // Higher video tracks (V2) composite on top of lower ones (V1).
+    active.sort_by_key(|(track_idx, _)| match project.tracks[*track_idx].name.as_str() {
+        "V2" => 1,
+        _ => 0,
     });
 
-    for (track_idx, tc) in active {
-        let track = &session.project.tracks[track_idx];
-        if track.muted {
-            continue;
-        }
-        
-        let state = match session.decoders.get_mut(&tc.clip.id) {
-            Some(s) => s,
-            None => {
-                match FfmpegMediaDecoder::open_scaled(&tc.clip.path, preview_scale) {
-                    Ok(dec) => {
-                        session.decoders.insert(tc.clip.id, DecoderState::new(dec));
-                        session.decoders.get_mut(&tc.clip.id).unwrap()
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to open video decoder for clip {}: {}", tc.clip.id, e);
-                        continue;
+    // Fast path: one opaque, untransformed clip that fills the canvas → forward
+    // the decoder's RGBA Arc directly (no canvas fill, no resize, no composite).
+    if let [(_, tc)] = active.as_slice() {
+        let untransformed = tc.clip.opacity >= 1.0
+            && (tc.clip.scale - 1.0).abs() < 1e-3
+            && tc.clip.position_x == 0
+            && tc.clip.position_y == 0;
+        if untransformed {
+            if let Some(state) = decoder_for(decoders, tc, preview_scale) {
+                let target_src_us = t_us - tc.start_us + tc.clip.trim_in_us();
+                if let Some(frame) = state.get_frame_at(target_src_us) {
+                    if frame.width == width && frame.height == height {
+                        return frame.rgba;
                     }
                 }
             }
-        };
-        
-        let target_src_us = t_us - tc.start_us + tc.clip.trim_in_us();
-        if let Some(frame) = state.get_frame_at(target_src_us) {
-            let scale = tc.clip.scale;
-            let overlay_w = (frame.width as f32 * scale).round() as usize;
-            let overlay_h = (frame.height as f32 * scale).round() as usize;
-            let overlay_w = overlay_w.max(1);
-            let overlay_h = overlay_h.max(1);
-            
-            let center_offset_x = (width as i32 - overlay_w as i32) / 2;
-            let center_offset_y = (height as i32 - overlay_h as i32) / 2;
-            // Clip positions are authored in full project-resolution space, so
-            // scale them to match the (possibly downscaled) preview canvas.
-            let offset_x = (tc.clip.position_x as f32 * preview_scale).round() as i32 + center_offset_x;
-            let offset_y = (tc.clip.position_y as f32 * preview_scale).round() as i32 + center_offset_y;
-            
-            if overlay_w != frame.width as usize || overlay_h != frame.height as usize {
-                let mut resized = vec![0u8; overlay_w * overlay_h * 4];
-                resize_rgba(&frame.rgba, frame.width as usize, frame.height as usize, &mut resized, overlay_w, overlay_h);
-                composite_rgba_transformed(
-                    &mut canvas,
-                    width as usize,
-                    height as usize,
-                    &resized,
-                    overlay_w,
-                    overlay_h,
-                    offset_x,
-                    offset_y,
-                    tc.clip.opacity,
-                );
-            } else {
-                composite_rgba_transformed(
-                    &mut canvas,
-                    width as usize,
-                    height as usize,
-                    &frame.rgba,
-                    frame.width as usize,
-                    frame.height as usize,
-                    offset_x,
-                    offset_y,
-                    tc.clip.opacity,
-                );
-            }
         }
     }
-    
-    canvas
+
+    // Slow path: composite every active clip onto the reused canvas.
+    let needed = (width as usize) * (height as usize) * 4;
+    if canvas.len() != needed {
+        canvas.resize(needed, 0);
+    }
+    // Reset to opaque black (R=G=B=0, A=255).
+    canvas.fill(0);
+    for i in (3..canvas.len()).step_by(4) {
+        canvas[i] = 255;
+    }
+
+    for (_, tc) in active {
+        let target_src_us = t_us - tc.start_us + tc.clip.trim_in_us();
+        let (scale, opacity, pos_x, pos_y) =
+            (tc.clip.scale, tc.clip.opacity, tc.clip.position_x, tc.clip.position_y);
+
+        let frame = match decoder_for(decoders, tc, preview_scale) {
+            Some(state) => match state.get_frame_at(target_src_us) {
+                Some(f) => f,
+                None => continue,
+            },
+            None => continue,
+        };
+
+        let overlay_w = ((frame.width as f32 * scale).round() as usize).max(1);
+        let overlay_h = ((frame.height as f32 * scale).round() as usize).max(1);
+
+        let center_offset_x = (width as i32 - overlay_w as i32) / 2;
+        let center_offset_y = (height as i32 - overlay_h as i32) / 2;
+        // Clip positions are authored in full project-resolution space, so
+        // scale them to match the (possibly downscaled) preview canvas.
+        let offset_x = (pos_x as f32 * preview_scale).round() as i32 + center_offset_x;
+        let offset_y = (pos_y as f32 * preview_scale).round() as i32 + center_offset_y;
+
+        if overlay_w != frame.width as usize || overlay_h != frame.height as usize {
+            let mut resized = vec![0u8; overlay_w * overlay_h * 4];
+            resize_rgba(&frame.rgba, frame.width as usize, frame.height as usize, &mut resized, overlay_w, overlay_h);
+            composite_rgba_transformed(
+                canvas.as_mut_slice(), width as usize, height as usize,
+                &resized, overlay_w, overlay_h, offset_x, offset_y, opacity,
+            );
+        } else {
+            composite_rgba_transformed(
+                canvas.as_mut_slice(), width as usize, height as usize,
+                &frame.rgba, frame.width as usize, frame.height as usize, offset_x, offset_y, opacity,
+            );
+        }
+    }
+
+    Arc::from(canvas.as_slice())
 }

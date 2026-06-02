@@ -33,6 +33,15 @@ pub struct FfmpegMediaDecoder {
     /// True when VideoToolbox hardware decoding is attached; frames then arrive
     /// in GPU memory and must be transferred to system memory before scaling.
     hw_active: bool,
+    /// Last frame produced by `decode_next` (raw — hardware surface or native
+    /// pixel format), kept so the caller can decide whether to pay for the
+    /// expensive `convert` (GPU download + swscale). Decoding forward to skip
+    /// frames is cheap; converting every skipped frame is what isn't.
+    cur_frame: VideoFrame,
+    cur_pts_us: i64,
+    have_cur: bool,
+    /// Scratch frame reused for hardware→system memory transfers.
+    sw_frame: VideoFrame,
     meta: StreamMeta,
     eof: bool,
 }
@@ -120,6 +129,10 @@ impl FfmpegMediaDecoder {
             width,
             height,
             hw_active,
+            cur_frame: VideoFrame::empty(),
+            cur_pts_us: 0,
+            have_cur: false,
+            sw_frame: VideoFrame::empty(),
             meta,
             eof: false,
         })
@@ -145,22 +158,95 @@ impl FfmpegMediaDecoder {
         (pts as f64 * self.time_base_num as f64 / self.time_base_den as f64 * 1_000_000.0) as i64
     }
 
-    /// Turn one decoded frame into RGBA, downloading from the GPU first when
-    /// hardware decoding is active. Returns the CPU-side frame ready to scale.
-    fn process_decoded(&mut self, frame: &VideoFrame) -> DecoderResult<DecodedFrame> {
-        let pts_us = self.pts_to_us(frame.pts().unwrap_or(0));
+    /// Decode the next frame into `cur_frame` **without** converting it to RGBA,
+    /// returning its presentation timestamp (µs). This is the cheap half of
+    /// decoding: for hardware it leaves the surface on the GPU. Callers skipping
+    /// frames (e.g. seeking forward to a target time) loop on this and only call
+    /// [`convert_current`](Self::convert_current) for the frame they keep,
+    /// avoiding a GPU download + swscale per discarded frame.
+    pub fn decode_next(&mut self) -> DecoderResult<Option<i64>> {
+        if self.eof {
+            return Ok(None);
+        }
+        loop {
+            let mut frame = VideoFrame::empty();
+            match self.decoder.receive_frame(&mut frame) {
+                Ok(()) => {
+                    let pts_us = self.pts_to_us(frame.pts().unwrap_or(0));
+                    self.cur_frame = frame;
+                    self.cur_pts_us = pts_us;
+                    self.have_cur = true;
+                    return Ok(Some(pts_us));
+                }
+                Err(ffmpeg_next::Error::Other { errno })
+                    if errno == ffmpeg_next::error::EAGAIN => {}
+                Err(ffmpeg_next::Error::Eof) => {
+                    self.eof = true;
+                    return Ok(None);
+                }
+                Err(e) => return Err(DecoderError::Ffmpeg(e)),
+            }
+
+            // Need more input. Pull the next video packet from the container.
+            let mut sent_any = false;
+            for (stream, packet) in self.ictx.packets() {
+                if stream.index() == self.video_stream_index {
+                    self.decoder.send_packet(&packet)?;
+                    sent_any = true;
+                    break;
+                }
+            }
+            if !sent_any {
+                self.decoder.send_eof()?;
+                self.eof = true;
+                let mut frame = VideoFrame::empty();
+                match self.decoder.receive_frame(&mut frame) {
+                    Ok(()) => {
+                        let pts_us = self.pts_to_us(frame.pts().unwrap_or(0));
+                        self.cur_frame = frame;
+                        self.cur_pts_us = pts_us;
+                        self.have_cur = true;
+                        return Ok(Some(pts_us));
+                    }
+                    _ => return Ok(None),
+                }
+            }
+        }
+    }
+
+    /// Convert the frame last produced by [`decode_next`](Self::decode_next) to
+    /// RGBA, downloading from the GPU first on the hardware path. Errors if no
+    /// frame has been decoded yet.
+    pub fn convert_current(&mut self) -> DecoderResult<DecodedFrame> {
+        if !self.have_cur {
+            return Err(DecoderError::Ffmpeg(ffmpeg_next::Error::from(
+                ffmpeg_next::error::EAGAIN,
+            )));
+        }
+        let pts_us = self.cur_pts_us;
         let is_hw = self.hw_active
-            && unsafe { (*frame.as_ptr()).format } == ffi::AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX as i32;
+            && unsafe { (*self.cur_frame.as_ptr()).format }
+                == ffi::AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX as i32;
         if is_hw {
             // Download the GPU surface to system memory (typically NV12/P010).
-            let mut sw = VideoFrame::empty();
-            let ret = unsafe { ffi::av_hwframe_transfer_data(sw.as_mut_ptr(), frame.as_ptr(), 0) };
+            // The mem::swap dance reuses `sw_frame` while satisfying the borrow
+            // checker (we need `&cur_frame`/`&sw_frame` plus `&mut self.scaler`).
+            let mut sw = std::mem::replace(&mut self.sw_frame, VideoFrame::empty());
+            let ret = unsafe {
+                ffi::av_hwframe_transfer_data(sw.as_mut_ptr(), self.cur_frame.as_ptr(), 0)
+            };
             if ret < 0 {
+                self.sw_frame = sw;
                 return Err(DecoderError::Ffmpeg(ffmpeg_next::Error::from(ret)));
             }
-            self.convert(&sw, pts_us)
+            let out = self.convert(&sw, pts_us);
+            self.sw_frame = sw;
+            out
         } else {
-            self.convert(frame, pts_us)
+            let cur = std::mem::replace(&mut self.cur_frame, VideoFrame::empty());
+            let out = self.convert(&cur, pts_us);
+            self.cur_frame = cur;
+            out
         }
     }
 
@@ -231,50 +317,14 @@ impl MediaDecoder for FfmpegMediaDecoder {
         self.ictx.seek(target, ..target)?;
         self.decoder.flush();
         self.eof = false;
+        self.have_cur = false;
         Ok(())
     }
 
     fn next_frame(&mut self) -> DecoderResult<Option<DecodedFrame>> {
-        if self.eof {
-            return Ok(None);
-        }
-        loop {
-            // Try to pull a decoded frame already in the decoder.
-            let mut frame = VideoFrame::empty();
-            match self.decoder.receive_frame(&mut frame) {
-                Ok(()) => {
-                    return Ok(Some(self.process_decoded(&frame)?));
-                }
-                Err(ffmpeg_next::Error::Other { errno })
-                    if errno == ffmpeg_next::error::EAGAIN => {}
-                Err(ffmpeg_next::Error::Eof) => {
-                    self.eof = true;
-                    return Ok(None);
-                }
-                Err(e) => return Err(DecoderError::Ffmpeg(e)),
-            }
-
-            // Need more input. Pull next packet from container.
-            let mut sent_any = false;
-            for (stream, packet) in self.ictx.packets() {
-                if stream.index() == self.video_stream_index {
-                    self.decoder.send_packet(&packet)?;
-                    sent_any = true;
-                    break;
-                }
-            }
-            if !sent_any {
-                self.decoder.send_eof()?;
-                self.eof = true;
-                // Drain remaining frames on next loop iteration.
-                let mut frame = VideoFrame::empty();
-                match self.decoder.receive_frame(&mut frame) {
-                    Ok(()) => {
-                        return Ok(Some(self.process_decoded(&frame)?));
-                    }
-                    _ => return Ok(None),
-                }
-            }
+        match self.decode_next()? {
+            Some(_) => Ok(Some(self.convert_current()?)),
+            None => Ok(None),
         }
     }
 }
