@@ -29,6 +29,7 @@ fn main() -> Result<()> {
     // Load persisted state. Each `.unwrap_or_default()` keeps the app
     // launchable on a fresh install where these files do not yet exist.
     let storage = Arc::new(Storage::for_app()?);
+    bridge::models::set_data_dir(storage.data_dir.clone());
     let config = AppConfig::load(&storage).unwrap_or_else(|e| {
         tracing::warn!(error = %e, "config load failed, using defaults");
         AppConfig::default()

@@ -1,126 +1,151 @@
 import { Palette } from "../styles/palette.slint";
 import { Theme } from "../styles/theme.slint";
-import { SpeakerIcon, SpeakerMutedIcon, LockClosedIcon, LockOpenIcon } from "icons.slint";
+import { SpeakerIcon, SpeakerMutedIcon, EyeIcon, EyeOffIcon, LockClosedIcon, LockOpenIcon } from "icons.slint";
 
-/// Left-edge label + mute/lock chips for a single timeline track.
+// A small square icon toggle used in the track header (mute / lock).
+component ChipToggle inherits Rectangle {
+    in property <bool> active;
+    in property <color> active-color: Palette.danger;
+    out property <bool> has-hover: ta.has-hover;
+    callback clicked();
+    width: 20px;
+    height: 20px;
+    border-radius: Theme.radius-sm;
+    background: root.active
+        ? root.active-color
+        : (ta.has-hover ? Palette.surface-3 : transparent);
+    animate background { duration: 100ms; }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    @children
+}
+
+/// Horizontal left-rail header for one timeline track: name + visibility/mute
+/// and lock toggles (DaVinci / CapCut style).
 export component TrackHeader inherits Rectangle {
     in property <string> label;
+    in property <bool> is-audio: false;
     in property <color> badge-color: Palette.accent;
     in property <bool> muted;
     in property <bool> soloed;
     in property <bool> locked;
-
     in property <bool> deletable: true;
+
     callback toggle-mute();
     callback toggle-solo();
     callback toggle-lock();
     callback delete-track();
 
-    width: 56px;
-    background: Palette.surface-2;
+    background: root.muted ? Palette.danger-soft : Palette.surface-2;
+    border-radius: Theme.radius-sm;
     border-width: 1px;
     border-color: Palette.border;
-    border-radius: Theme.radius-sm;
+    clip: true;
 
-    VerticalLayout {
-        padding: 4px;
+    Rectangle {
+        width: 3px;
+        height: 100%;
+        background: root.badge-color;
+        opacity: root.muted ? 0.45 : 0.9;
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 6px;
         spacing: 4px;
         alignment: center;
 
-        // Track badge
-        Rectangle {
-            width: 28px; height: 18px;
-            border-radius: Theme.radius-sm;
-            background: root.badge-color;
-            x: (parent.width - self.width) / 2;
-            Text {
-                text: root.label;
-                color: white;
-                font-size: Theme.font-xs;
-                font-weight: 700;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-        }
-
-        // Controls row
-        HorizontalLayout {
-            spacing: 2px;
+        VerticalLayout {
+            spacing: 3px;
+            horizontal-stretch: 1;
             alignment: center;
 
-            // Mute Button (Speaker)
-            mute-ta := TouchArea {
-                mouse-cursor: pointer;
-                width: 16px; height: 16px;
-                clicked => { root.toggle-mute(); }
-                Rectangle {
-                    border-radius: 2px;
-                    background: root.muted
-                        ? Palette.danger
-                        : (mute-ta.has-hover ? Palette.surface-3 : transparent);
-                    border-width: 1px;
-                    border-color: root.muted ? Palette.danger : Palette.border;
-
-                    if !root.muted : SpeakerIcon {
-                        icon-color: mute-ta.has-hover ? white : Palette.text-muted;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
-                    }
-                    if root.muted : SpeakerMutedIcon {
-                        icon-color: white;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
-                    }
-                }
-            }
-
-            // Solo Button (S)
-            solo-ta := TouchArea {
-                mouse-cursor: pointer;
-                width: 16px; height: 16px;
-                clicked => { root.toggle-solo(); }
-                Rectangle {
-                    border-radius: 2px;
-                    background: root.soloed
-                        ? Palette.warning
-                        : (solo-ta.has-hover ? Palette.surface-3 : transparent);
-                    border-width: 1px;
-                    border-color: root.soloed ? Palette.warning : Palette.border;
+            Rectangle {
+                width: root.is-audio ? 42px : 40px;
+                height: 15px;
+                border-radius: Theme.radius-sm;
+                background: root.badge-color.with-alpha(0.16);
+                border-width: 1px;
+                border-color: root.badge-color.with-alpha(0.35);
+                HorizontalLayout {
+                    padding-left: 5px;
+                    padding-right: 5px;
                     Text {
-                        text: "S";
-                        color: root.soloed ? white : Palette.text-muted;
-                        font-size: 9px;
-                        font-weight: 700;
-                        horizontal-alignment: center;
+                        text: root.is-audio ? "AUDIO" : "VIDEO";
+                        color: root.badge-color.brighter(0.35);
+                        font-size: 8px;
+                        font-weight: 800;
                         vertical-alignment: center;
                     }
                 }
             }
 
-            // Lock Button (Padlock)
-            lock-ta := TouchArea {
-                mouse-cursor: pointer;
-                width: 16px; height: 16px;
-                clicked => { root.toggle-lock(); }
-                Rectangle {
-                    border-radius: 2px;
-                    background: root.locked
-                        ? Palette.text-muted
-                        : (lock-ta.has-hover ? Palette.surface-3 : transparent);
-                    border-width: 1px;
-                    border-color: root.locked ? Palette.text-muted : Palette.border;
+            Text {
+                text: root.label;
+                color: root.locked ? Palette.text-muted : Palette.text;
+                font-size: Theme.font-xs;
+                font-weight: 700;
+                overflow: elide;
+            }
+        }
 
-                    if !root.locked : LockOpenIcon {
-                        icon-color: lock-ta.has-hover ? white : Palette.text-dim;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
-                    }
-                    if root.locked : LockClosedIcon {
-                        icon-color: white;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
-                    }
-                }
+        // Visibility (video) / mute (audio)
+        mute := ChipToggle {
+            active: root.muted;
+            active-color: Palette.danger;
+            clicked => { root.toggle-mute(); }
+            if root.is-audio && !root.muted : SpeakerIcon {
+                icon-color: mute.active ? white : Palette.text-muted;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+            if root.is-audio && root.muted : SpeakerMutedIcon {
+                icon-color: white;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+            if !root.is-audio && !root.muted : EyeIcon {
+                icon-color: Palette.text-muted;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+            if !root.is-audio && root.muted : EyeOffIcon {
+                icon-color: white;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+        }
+
+        solo := ChipToggle {
+            active: root.soloed;
+            active-color: Palette.accent;
+            clicked => { root.toggle-solo(); }
+            Text {
+                text: "S";
+                color: root.soloed ? white : (solo.has-hover ? Palette.text : Palette.text-dim);
+                font-size: 10px;
+                font-weight: 800;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        // Lock
+        lock := ChipToggle {
+            active: root.locked;
+            active-color: Palette.text-muted;
+            clicked => { root.toggle-lock(); }
+            if !root.locked : LockOpenIcon {
+                icon-color: lock.has-hover ? white : Palette.text-dim;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+            if root.locked : LockClosedIcon {
+                icon-color: white;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
             }
         }
     }

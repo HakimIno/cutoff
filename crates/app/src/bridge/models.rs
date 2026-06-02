@@ -1,15 +1,22 @@
 //! Adapters between domain types and the Slint-generated UI structs.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use slint::{Image, Model, ModelRc, SharedString, VecModel};
-use video_merger_core::domain::{Clip, Playlist, Project, TrackKind};
+use video_merger_core::domain::{Clip, Playlist, Project, TrackClip, TrackKind};
 use video_merger_engine::audio::waveform as wf;
 use video_merger_ui::{AppWindow, ClipData, TrackData};
 
 use crate::view_model::timeline_vm::ClipRow;
 use super::TracksState;
+
+static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn set_data_dir(path: PathBuf) {
+    let _ = DATA_DIR.set(path);
+}
 
 /// Down-sample waveform peaks into the ~200 bars the UI strip can render
 /// without overdraw. Returns abs peak per output bucket as a value in 0..1.
@@ -42,13 +49,10 @@ fn waveform_to_bars(path: &Path, bars: usize) -> Vec<f32> {
 /// Convert a domain `Clip` into the Slint-side `ClipData` struct.
 pub fn clip_to_data(clip: &Clip) -> ClipData {
     let row = ClipRow::from(clip);
-    let thumbs: Vec<Image> = clip
-        .thumbnails
-        .iter()
-        .filter_map(|p| load_image(p))
-        .collect();
-    let peaks: Vec<f32> = clip
-        .waveform_path
+    let thumb_paths = asset_thumb_paths(clip);
+    let thumbs: Vec<Image> = thumb_paths.iter().filter_map(|p| load_image(p)).collect();
+    let waveform_path = asset_waveform_path(clip);
+    let peaks: Vec<f32> = waveform_path
         .as_deref()
         .map(|p| waveform_to_bars(p, 200))
         .unwrap_or_default();
@@ -58,6 +62,9 @@ pub fn clip_to_data(clip: &Clip) -> ClipData {
         duration: SharedString::from(row.duration),
         resolution: SharedString::from(row.resolution),
         duration_secs: row.duration_secs,
+        // Filled in per-track by `sync_tracks` (the flat sidebar list has no
+        // timeline position, so it stays 0 there).
+        start_secs: 0.0,
         thumbnails: ModelRc::from(Rc::new(VecModel::from(thumbs))),
         waveform_peaks: ModelRc::from(Rc::new(VecModel::from(peaks))),
         muted: clip.muted,
@@ -67,6 +74,60 @@ pub fn clip_to_data(clip: &Clip) -> ClipData {
 
 fn load_image(path: &Path) -> Option<Image> {
     Image::load_from_path(path).ok()
+}
+
+fn asset_thumb_paths(clip: &Clip) -> Vec<PathBuf> {
+    if !clip.thumbnails.is_empty() {
+        return clip.thumbnails.clone();
+    }
+    let Some(data_dir) = DATA_DIR.get() else {
+        return Vec::new();
+    };
+    let dir = data_dir.join("thumbs").join(clip.id.to_string());
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("jpg") || ext.eq_ignore_ascii_case("jpeg"))
+                .unwrap_or(false)
+        })
+        .collect();
+    paths.sort();
+    paths
+}
+
+fn asset_waveform_path(clip: &Clip) -> Option<PathBuf> {
+    if let Some(path) = &clip.waveform_path {
+        return Some(path.clone());
+    }
+    let path = DATA_DIR
+        .get()
+        .map(|data_dir| data_dir.join("waveforms").join(format!("{}.bin", clip.id)))?;
+    path.exists().then_some(path)
+}
+
+fn track_clip_rows(track_clips: &[TrackClip]) -> Vec<ClipData> {
+    track_clips
+        .iter()
+        .map(|tc| {
+            let mut d = clip_to_data(&tc.clip);
+            // Position the card on the timeline at the clip's real start.
+            d.start_secs = tc.start_us as f32 / 1_000_000.0;
+            d
+        })
+        .collect()
+}
+
+fn paired_video_track_name(audio_track_name: &str) -> Option<String> {
+    audio_track_name
+        .strip_prefix('A')
+        .filter(|suffix| !suffix.is_empty())
+        .map(|suffix| format!("V{suffix}"))
 }
 
 /// Append a new clip to the flat sidebar model. The per-track display is
@@ -106,15 +167,32 @@ pub fn sync_tracks(window: &AppWindow, project: &Project, tracks_state: &TracksS
         vm.remove(0);
     }
     for (idx, track) in project.tracks.iter().enumerate() {
-        let clip_rows: Vec<ClipData> = track
-            .clips
-            .iter()
-            .map(|tc| clip_to_data(&tc.clip))
-            .collect();
+        let mut display_only = false;
+        let clip_rows = if matches!(track.kind, TrackKind::Audio) && track.clips.is_empty() {
+            paired_video_track_name(&track.name)
+                .and_then(|video_name| {
+                    project
+                        .tracks
+                        .iter()
+                        .find(|candidate| {
+                            matches!(candidate.kind, TrackKind::Video)
+                                && candidate.name == video_name
+                                && !candidate.clips.is_empty()
+                        })
+                })
+                .map(|video_track| {
+                    display_only = true;
+                    track_clip_rows(&video_track.clips)
+                })
+                .unwrap_or_else(|| track_clip_rows(&track.clips))
+        } else {
+            track_clip_rows(&track.clips)
+        };
         vm.push(TrackData {
             name: SharedString::from(track.name.clone()),
             is_audio: matches!(track.kind, TrackKind::Audio),
             clips: ModelRc::from(Rc::new(VecModel::from(clip_rows))),
+            display_only,
             muted: tracks_state.muted.get(idx).copied().unwrap_or(false),
             soloed: tracks_state.soloed.get(idx).copied().unwrap_or(false),
             locked: tracks_state.locked.get(idx).copied().unwrap_or(false),

@@ -19,6 +19,7 @@ export struct TrackData {
     name: string,
     is-audio: bool,
     clips: [ClipData],
+    display-only: bool,
     muted: bool,
     soloed: bool,
     locked: bool,
@@ -31,6 +32,10 @@ component TrackLane inherits Rectangle {
     in property <string> selected-id;
     in property <length> px-per-sec: 6px;
     in property <string> drag-from-id;
+    in property <bool> is-audio: false;
+    in property <bool> muted: false;
+    in property <bool> interactive: true;
+    in property <color> accent-color: Palette.accent;
 
     callback clip-clicked(string);
     callback remove-clicked(string);
@@ -42,12 +47,28 @@ component TrackLane inherits Rectangle {
     callback reveal-in-finder(string);
     callback move-to-track(string, int);
 
+    background: root.muted
+        ? Palette.danger-soft
+        : (root.is-audio ? #0f1514 : #101116);
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: Palette.border;
+    clip: true;
+
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 1px;
+        background: root.accent-color.with-alpha(0.18);
+    }
+
     HorizontalLayout {
-        padding-left: Theme.spacing-xs;
-        padding-right: Theme.spacing-xs;
-        padding-top: 2px;
-        padding-bottom: 2px;
-        spacing: 1px;
+        padding-left: 7px;
+        padding-right: 7px;
+        padding-top: 8px;
+        padding-bottom: 7px;
+        spacing: 2px;
         alignment: start;
         for clip[idx] in root.clips: ClipBlock {
             data: clip;
@@ -55,6 +76,9 @@ component TrackLane inherits Rectangle {
             px-per-sec: root.px-per-sec;
             selected: clip.id == root.selected-id;
             drag-ghost: root.drag-from-id != "" && clip.id == root.drag-from-id;
+            is-audio: root.is-audio;
+            interactive: root.interactive;
+            accent-color: root.accent-color;
             clip-clicked(id)      => { root.clip-clicked(id); }
             remove-clicked(id)    => { root.remove-clicked(id); }
             drag-started(id)      => { root.drag-started(id); }
@@ -133,12 +157,12 @@ export component Timeline inherits Rectangle {
         max(0.0, min(1.0, (root.px-per-sec / 1px - 1.0) / 199.0));
 
     // Per-lane visual height.
-    property <length> lane-height: 80px;
-    property <length> lane-gap: 4px;
+    property <length> lane-height: 62px;
+    property <length> lane-gap: 3px;
     property <length> ruler-height: 24px;
-    property <length> ruler-offset: 2px;
-    property <length> header-rail-width: 60px;
-    property <length> add-row-height: 28px;
+    property <length> ruler-offset: 4px;
+    property <length> header-rail-width: 126px;
+    property <length> add-row-height: 30px;
 
     // Total scrollable content height = ruler + N * (lane + gap) + add buttons row.
     property <length> content-height:
@@ -231,9 +255,9 @@ export component Timeline inherits Rectangle {
 
         Rectangle {
             // Fixed visible height (the inner content scrolls).
-            height: 364px;
+            height: 322px;
             border-radius: Theme.radius;
-            background: Palette.surface;
+            background: Palette.surface-2;
             border-width: 1px;
             border-color: Palette.border;
             clip: true;
@@ -244,14 +268,21 @@ export component Timeline inherits Rectangle {
                 // Left rail: track headers + add-track buttons stacked.
                 Rectangle {
                     width: root.header-rail-width;
-                    background: Palette.surface;
+                    background: Palette.surface-2;
+                    Rectangle {
+                        x: parent.width - 1px;
+                        width: 1px;
+                        height: 100%;
+                        background: Palette.border;
+                    }
                     VerticalLayout {
                         padding-top: root.ruler-height + root.ruler-offset;
-                        padding-left: 2px;
-                        padding-right: 2px;
+                        padding-left: 6px;
+                        padding-right: 6px;
                         spacing: root.lane-gap;
                         for track[idx] in root.tracks : TrackHeader {
                             label: track.name;
+                            is-audio: track.is-audio;
                             badge-color: track.is-audio ? Palette.success : Palette.accent;
                             muted: track.muted;
                             soloed: track.soloed;
@@ -266,14 +297,14 @@ export component Timeline inherits Rectangle {
                         }
                         // Add-track buttons.
                         HorizontalLayout {
-                            spacing: 2px;
+                            spacing: 4px;
                             height: root.add-row-height;
                             add-video := TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { root.add-video-track(); }
                                 Rectangle {
                                     border-radius: Theme.radius-sm;
-                                    background: add-video.has-hover ? Palette.accent : Palette.surface-3;
+                                    background: add-video.has-hover ? Palette.accent : Palette.surface;
                                     border-width: 1px;
                                     border-color: Palette.border;
                                     Text {
@@ -291,7 +322,7 @@ export component Timeline inherits Rectangle {
                                 clicked => { root.add-audio-track(); }
                                 Rectangle {
                                     border-radius: Theme.radius-sm;
-                                    background: add-audio.has-hover ? Palette.success : Palette.surface-3;
+                                    background: add-audio.has-hover ? Palette.success : Palette.surface;
                                     border-width: 1px;
                                     border-color: Palette.border;
                                     Text {
@@ -311,25 +342,7 @@ export component Timeline inherits Rectangle {
                 Rectangle {
                     horizontal-stretch: 1;
 
-                    if root.all-clips.length == 0 : VerticalLayout {
-                        alignment: center;
-                        spacing: Theme.spacing-xs;
-                        Text {
-                            text: "No clips yet";
-                            color: Palette.text-muted;
-                            font-size: Theme.font-md;
-                            font-weight: 600;
-                            horizontal-alignment: center;
-                        }
-                        Text {
-                            text: "Click  Import  or drop a video onto the window";
-                            color: Palette.text-dim;
-                            font-size: Theme.font-xs;
-                            horizontal-alignment: center;
-                        }
-                    }
-
-                    if root.all-clips.length > 0 : ScrollView {
+                    ScrollView {
                         viewport-height: self.visible-height;
                         viewport-width: max(root.total-width + 12px, self.visible-width);
 
@@ -343,7 +356,7 @@ export component Timeline inherits Rectangle {
                                 y: 0;
                                 width: parent.width;
                                 height: root.ruler-height;
-                                background: Palette.surface-2;
+                                background: #111216;
 
                                 Rectangle {
                                     x: 0;
@@ -357,8 +370,8 @@ export component Timeline inherits Rectangle {
                                     x: tick.x;
                                     y: tick.major ? 12px : 17px;
                                     width: 1px;
-                                    height: tick.major ? 12px : 7px;
-                                    background: tick.major ? Palette.text-muted : Palette.text-dim;
+                                    height: tick.major ? 11px : 6px;
+                                    background: tick.major ? Palette.border-bright : Palette.border;
                                 }
 
                                 for tick in root.ruler-ticks: Text {
@@ -366,8 +379,8 @@ export component Timeline inherits Rectangle {
                                     x: tick.x + 3px;
                                     y: 2px;
                                     text: tick.label;
-                                    color: Palette.text-muted;
-                                    font-size: Theme.font-xs;
+                                    color: Palette.text-dim;
+                                    font-size: 9px;
                                     font-weight: 500;
                                 }
 
@@ -387,10 +400,11 @@ export component Timeline inherits Rectangle {
                                 y: root.ruler-height + root.ruler-offset + idx * (root.lane-height + root.lane-gap);
                                 width: parent.width;
                                 height: root.lane-height;
-                                background: track.muted
-                                    ? Palette.danger-soft
-                                    : (track.clips.length == 0 ? Palette.background : transparent);
                                 clips: track.clips;
+                                is-audio: track.is-audio;
+                                muted: track.muted;
+                                interactive: !track.display-only;
+                                accent-color: track.is-audio ? Palette.success : Palette.accent;
                                 selected-id: root.selected-id;
                                 px-per-sec: root.px-per-sec;
                                 drag-from-id: root.drag-from-id;
@@ -430,6 +444,24 @@ export component Timeline inherits Rectangle {
                                 background: Palette.accent-2;
                                 border-radius: 1px;
                             }
+                        }
+                    }
+
+                    if root.all-clips.length == 0 : VerticalLayout {
+                        alignment: center;
+                        spacing: Theme.spacing-xs;
+                        Text {
+                            text: "No clips yet";
+                            color: Palette.text-muted;
+                            font-size: Theme.font-md;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "Click  Import  or drop a video onto the window";
+                            color: Palette.text-dim;
+                            font-size: Theme.font-xs;
+                            horizontal-alignment: center;
                         }
                     }
                 }
