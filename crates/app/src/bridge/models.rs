@@ -18,32 +18,79 @@ pub fn set_data_dir(path: PathBuf) {
     let _ = DATA_DIR.set(path);
 }
 
-/// Down-sample waveform peaks into the ~200 bars the UI strip can render
-/// without overdraw. Returns abs peak per output bucket as a value in 0..1.
-fn waveform_to_bars(path: &Path, bars: usize) -> Vec<f32> {
+struct WaveformBars {
+    peaks: Vec<f32>,
+    mins: Vec<f32>,
+    maxs: Vec<f32>,
+}
+
+/// Down-sample waveform buckets for the UI without overdraw. `mins`/`maxs`
+/// preserve the actual waveform shape; `peaks` is kept for fallback rendering.
+fn waveform_to_bars(path: &Path, bars: usize) -> WaveformBars {
     let Ok(peaks) = wf::load_waveform(path) else {
-        return Vec::new();
+        return WaveformBars::default();
     };
     if peaks.peaks.is_empty() {
-        return Vec::new();
+        return WaveformBars::default();
     }
     let n_in = peaks.peaks.len();
     let bars = bars.min(n_in).max(1);
-    let mut out = Vec::with_capacity(bars);
+    let mut out_peaks = Vec::with_capacity(bars);
+    let mut out_mins = Vec::with_capacity(bars);
+    let mut out_maxs = Vec::with_capacity(bars);
     for i in 0..bars {
         let start = i * n_in / bars;
         let end = ((i + 1) * n_in / bars).max(start + 1);
         let mut peak = 0.0f32;
+        let mut min_v = 0.0f32;
+        let mut max_v = 0.0f32;
         for j in start..end {
             let (mn, mx) = peaks.peaks[j];
+            if mn < min_v {
+                min_v = mn;
+            }
+            if mx > max_v {
+                max_v = mx;
+            }
             let a = mn.abs().max(mx.abs());
             if a > peak {
                 peak = a;
             }
         }
-        out.push(peak.clamp(0.0, 1.0));
+        out_peaks.push(peak.clamp(0.0, 1.0));
+        out_mins.push(min_v.clamp(-1.0, 1.0));
+        out_maxs.push(max_v.clamp(-1.0, 1.0));
     }
-    out
+    let max_peak = out_peaks.iter().copied().fold(0.0f32, f32::max);
+    if max_peak > 0.0001 {
+        // Timeline waveforms are visual meters, not calibrated audio meters.
+        // Normalize per clip so quiet camera audio doesn't collapse into a flat line.
+        let gain = (0.82 / max_peak).clamp(1.0, 40.0);
+        for peak in &mut out_peaks {
+            *peak = (*peak * gain).clamp(0.0, 1.0);
+        }
+        for value in &mut out_mins {
+            *value = (*value * gain).clamp(-1.0, 1.0);
+        }
+        for value in &mut out_maxs {
+            *value = (*value * gain).clamp(-1.0, 1.0);
+        }
+    }
+    WaveformBars {
+        peaks: out_peaks,
+        mins: out_mins,
+        maxs: out_maxs,
+    }
+}
+
+impl Default for WaveformBars {
+    fn default() -> Self {
+        Self {
+            peaks: Vec::new(),
+            mins: Vec::new(),
+            maxs: Vec::new(),
+        }
+    }
 }
 
 /// Convert a domain `Clip` into the Slint-side `ClipData` struct.
@@ -52,7 +99,7 @@ pub fn clip_to_data(clip: &Clip) -> ClipData {
     let thumb_paths = asset_thumb_paths(clip);
     let thumbs: Vec<Image> = thumb_paths.iter().filter_map(|p| load_image(p)).collect();
     let waveform_path = asset_waveform_path(clip);
-    let peaks: Vec<f32> = waveform_path
+    let waveform = waveform_path
         .as_deref()
         .map(|p| waveform_to_bars(p, 200))
         .unwrap_or_default();
@@ -66,7 +113,9 @@ pub fn clip_to_data(clip: &Clip) -> ClipData {
         // timeline position, so it stays 0 there).
         start_secs: 0.0,
         thumbnails: ModelRc::from(Rc::new(VecModel::from(thumbs))),
-        waveform_peaks: ModelRc::from(Rc::new(VecModel::from(peaks))),
+        waveform_peaks: ModelRc::from(Rc::new(VecModel::from(waveform.peaks))),
+        waveform_mins: ModelRc::from(Rc::new(VecModel::from(waveform.mins))),
+        waveform_maxs: ModelRc::from(Rc::new(VecModel::from(waveform.maxs))),
         muted: clip.muted,
         video_track: clip.video_track as i32,
     }

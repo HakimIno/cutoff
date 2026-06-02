@@ -71,15 +71,15 @@ pub fn total_duration_secs(playlist: &Playlist) -> f32 {
 }
 
 // Layout constants — keep in sync with `timeline.slint`.
-pub const LANE_PADDING_PX: f32 = 7.0;
-pub const CARD_SPACING_PX: f32 = 2.0;
+pub const LANE_PADDING_PX: f32 = 6.0;
+pub const CARD_SPACING_PX: f32 = 3.0;
 
 /// Smallest on-screen width a clip card may shrink to, so a very short clip (or
 /// a fully zoomed-out timeline) stays visible and clickable. There is no upper
 /// clamp: width scales linearly with `px_per_sec` so cards always track the
 /// ruler exactly and zooming in/out actually resizes them. Keep in sync with
 /// the `width` binding in `clip-card.slint`.
-pub const CARD_MIN_PX: f32 = 36.0;
+pub const CARD_MIN_PX: f32 = 44.0;
 
 pub fn card_width(duration_secs: f32, px_per_sec: f32) -> f32 {
     (duration_secs * px_per_sec).max(CARD_MIN_PX)

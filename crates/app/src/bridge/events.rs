@@ -348,7 +348,7 @@ fn enqueue_thumbnails(
         clip_id,
         path,
         out_dir,
-        count: 10,
+        count: 48,
     }) {
         tracing::warn!(error = %err, "failed to enqueue thumbnails");
     }

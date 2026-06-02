@@ -39,6 +39,10 @@ export component AppWindow inherits Window {
     in property <float> selected-scale;
     in property <int> selected-position-x;
     in property <int> selected-position-y;
+    in property <int> project-width: 1920;
+    in property <int> project-height: 1080;
+    in property <int> selected-width: 1920;
+    in property <int> selected-height: 1080;
 
     // Aggregate stats
     in property <int> clip-count;
@@ -251,6 +255,16 @@ export component AppWindow inherits Window {
                                 step-frame(delta) => { root.step-frame(delta); }
                                 jump-start => { root.jump-start(); }
                                 jump-end => { root.jump-end(); }
+                                project-width: root.project-width;
+                                project-height: root.project-height;
+                                selected-width: root.selected-width;
+                                selected-height: root.selected-height;
+                                selected-scale: root.selected-scale;
+                                selected-position-x: root.selected-position-x;
+                                selected-position-y: root.selected-position-y;
+                                scale-changed(s) => { root.selected-clip-scale-changed(s); }
+                                position-x-changed(x) => { root.selected-clip-position-x-changed(x); }
+                                position-y-changed(y) => { root.selected-clip-position-y-changed(y); }
                             }
                         }
                     }

@@ -49,8 +49,8 @@ component TrackLane inherits Rectangle {
 
     background: root.muted
         ? Palette.danger-soft
-        : (root.is-audio ? #0f1514 : #101116);
-    border-radius: Theme.radius-sm;
+        : (root.is-audio ? #0d1714 : #101217);
+    border-radius: 2px;
     border-width: 1px;
     border-color: Palette.border;
     clip: true;
@@ -64,11 +64,11 @@ component TrackLane inherits Rectangle {
     }
 
     HorizontalLayout {
-        padding-left: 7px;
-        padding-right: 7px;
-        padding-top: 8px;
-        padding-bottom: 7px;
-        spacing: 2px;
+        padding-left: 6px;
+        padding-right: 6px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        spacing: 3px;
         alignment: start;
         for clip[idx] in root.clips: ClipBlock {
             data: clip;
@@ -157,18 +157,25 @@ export component Timeline inherits Rectangle {
         max(0.0, min(1.0, (root.px-per-sec / 1px - 1.0) / 199.0));
 
     // Per-lane visual height.
-    property <length> lane-height: 62px;
-    property <length> lane-gap: 3px;
+    property <length> lane-height: 46px;
+    property <length> lane-gap: 2px;
     property <length> ruler-height: 24px;
-    property <length> ruler-offset: 4px;
-    property <length> header-rail-width: 126px;
-    property <length> add-row-height: 30px;
+    property <length> ruler-offset: 3px;
+    property <length> header-rail-width: 168px;
+    property <length> add-row-height: 28px;
 
-    // Total scrollable content height = ruler + N * (lane + gap) + add buttons row.
-    property <length> content-height:
-        root.ruler-height + root.ruler-offset
+    // Height of the stacked track lanes + the add-track row (excludes the
+    // ruler, which is now a separate sticky strip). This is the vertical
+    // scroll content height shared by the left rail and the lane area.
+    property <length> stack-height:
+        root.ruler-offset
         + root.tracks.length * (root.lane-height + root.lane-gap)
         + root.add-row-height;
+
+    // Shared scroll offsets so the sticky ruler, left header rail, and the
+    // lane area stay in sync: ruler ↔ lanes on X, header rail ↔ lanes on Y.
+    property <length> h-scroll;
+    property <length> v-scroll;
 
     VerticalLayout {
         padding: Theme.spacing-md;
@@ -254,10 +261,10 @@ export component Timeline inherits Rectangle {
         }
 
         Rectangle {
-            // Fixed visible height (the inner content scrolls).
-            height: 322px;
-            border-radius: Theme.radius;
-            background: Palette.surface-2;
+            // Fixed visible height; lanes scroll vertically when tracks overflow.
+            height: 276px;
+            border-radius: Theme.radius-sm;
+            background: #101115;
             border-width: 1px;
             border-color: Palette.border;
             clip: true;
@@ -265,73 +272,97 @@ export component Timeline inherits Rectangle {
             HorizontalLayout {
                 spacing: 0px;
 
-                // Left rail: track headers + add-track buttons stacked.
+                // ── Left rail: corner + vertically-scrolling track headers ──
                 Rectangle {
                     width: root.header-rail-width;
-                    background: Palette.surface-2;
+                    background: #121318;
                     Rectangle {
                         x: parent.width - 1px;
                         width: 1px;
                         height: 100%;
                         background: Palette.border;
                     }
+
                     VerticalLayout {
-                        padding-top: root.ruler-height + root.ruler-offset;
-                        padding-left: 6px;
-                        padding-right: 6px;
-                        spacing: root.lane-gap;
-                        for track[idx] in root.tracks : TrackHeader {
-                            label: track.name;
-                            is-audio: track.is-audio;
-                            badge-color: track.is-audio ? Palette.success : Palette.accent;
-                            muted: track.muted;
-                            soloed: track.soloed;
-                            locked: track.locked;
-                            // Don't let users delete the very last track.
-                            deletable: root.tracks.length > 1;
-                            height: root.lane-height;
-                            toggle-mute => { root.toggle-track-mute(idx); }
-                            toggle-solo => { root.toggle-track-solo(idx); }
-                            toggle-lock => { root.toggle-track-lock(idx); }
-                            delete-track => { root.delete-track(idx); }
-                        }
-                        // Add-track buttons.
-                        HorizontalLayout {
-                            spacing: 4px;
-                            height: root.add-row-height;
-                            add-video := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { root.add-video-track(); }
-                                Rectangle {
-                                    border-radius: Theme.radius-sm;
-                                    background: add-video.has-hover ? Palette.accent : Palette.surface;
-                                    border-width: 1px;
-                                    border-color: Palette.border;
-                                    Text {
-                                        text: "+V";
-                                        color: add-video.has-hover ? white : Palette.text;
-                                        font-size: 10px;
-                                        font-weight: 700;
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                    }
-                                }
+                        spacing: 0px;
+
+                        // Corner box, aligned with the ruler strip on the right.
+                        Rectangle {
+                            height: root.ruler-height;
+                            background: #15171d;
+                            Rectangle {
+                                x: 0; y: parent.height - 1px;
+                                width: 100%; height: 1px;
+                                background: Palette.border;
                             }
-                            add-audio := TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { root.add-audio-track(); }
-                                Rectangle {
-                                    border-radius: Theme.radius-sm;
-                                    background: add-audio.has-hover ? Palette.success : Palette.surface;
-                                    border-width: 1px;
-                                    border-color: Palette.border;
-                                    Text {
-                                        text: "+A";
-                                        color: add-audio.has-hover ? white : Palette.text;
-                                        font-size: 10px;
-                                        font-weight: 700;
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
+                        }
+
+                        head-sv := ScrollView {
+                            vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                            horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                            viewport-y <=> root.v-scroll;
+                            viewport-height: root.stack-height;
+
+                            VerticalLayout {
+                                padding-top: root.ruler-offset;
+                                padding-left: 6px;
+                                padding-right: 6px;
+                                spacing: root.lane-gap;
+                                for track[idx] in root.tracks : TrackHeader {
+                                    label: track.name;
+                                    clip-count: track.clips.length;
+                                    is-audio: track.is-audio;
+                                    badge-color: track.is-audio ? Palette.success : Palette.accent;
+                                    muted: track.muted;
+                                    soloed: track.soloed;
+                                    locked: track.locked;
+                                    // Don't let users delete the very last track.
+                                    deletable: root.tracks.length > 1;
+                                    height: root.lane-height;
+                                    toggle-mute => { root.toggle-track-mute(idx); }
+                                    toggle-solo => { root.toggle-track-solo(idx); }
+                                    toggle-lock => { root.toggle-track-lock(idx); }
+                                    delete-track => { root.delete-track(idx); }
+                                }
+                                // Add-track buttons.
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    height: root.add-row-height;
+                                    add-video := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.add-video-track(); }
+                                        Rectangle {
+                                            border-radius: Theme.radius-sm;
+                                            background: add-video.has-hover ? Palette.accent : #171921;
+                                            border-width: 1px;
+                                            border-color: Palette.border;
+                                            Text {
+                                                text: "+V";
+                                                color: add-video.has-hover ? white : Palette.text;
+                                                font-size: 10px;
+                                                font-weight: 700;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+                                    add-audio := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.add-audio-track(); }
+                                        Rectangle {
+                                            border-radius: Theme.radius-sm;
+                                            background: add-audio.has-hover ? Palette.success : #171921;
+                                            border-width: 1px;
+                                            border-color: Palette.border;
+                                            Text {
+                                                text: "+A";
+                                                color: add-audio.has-hover ? white : Palette.text;
+                                                font-size: 10px;
+                                                font-weight: 700;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -339,110 +370,137 @@ export component Timeline inherits Rectangle {
                     }
                 }
 
+                // ── Right: sticky ruler + scrolling lanes ──
                 Rectangle {
                     horizontal-stretch: 1;
 
-                    ScrollView {
-                        viewport-height: self.visible-height;
-                        viewport-width: max(root.total-width + 12px, self.visible-width);
+                    VerticalLayout {
+                        spacing: 0px;
 
+                        // Sticky ruler — scrolls horizontally with the lanes,
+                        // stays fixed vertically.
                         Rectangle {
-                            width: max(root.total-width + 12px, parent.width);
-                            height: root.content-height;
-
-                            // Ruler strip.
-                            Rectangle {
-                                x: 0;
-                                y: 0;
-                                width: parent.width;
-                                height: root.ruler-height;
-                                background: #111216;
+                            height: root.ruler-height;
+                            clip: true;
+                            ruler-sv := ScrollView {
+                                vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                                viewport-x <=> root.h-scroll;
+                                viewport-width: max(root.total-width + 12px, self.visible-width);
+                                viewport-height: root.ruler-height;
 
                                 Rectangle {
-                                    x: 0;
-                                    y: parent.height - 1px;
-                                    width: parent.width;
-                                    height: 1px;
-                                    background: Palette.border;
-                                }
+                                    width: max(root.total-width + 12px, parent.width);
+                                    height: root.ruler-height;
+                                    background: #15171d;
 
-                                for tick in root.ruler-ticks: Rectangle {
-                                    x: tick.x;
-                                    y: tick.major ? 12px : 17px;
-                                    width: 1px;
-                                    height: tick.major ? 11px : 6px;
-                                    background: tick.major ? Palette.border-bright : Palette.border;
-                                }
+                                    Rectangle {
+                                        x: 0; y: parent.height - 1px;
+                                        width: parent.width; height: 1px;
+                                        background: Palette.border;
+                                    }
 
-                                for tick in root.ruler-ticks: Text {
-                                    visible: tick.major;
-                                    x: tick.x + 3px;
-                                    y: 2px;
-                                    text: tick.label;
-                                    color: Palette.text-dim;
-                                    font-size: 9px;
-                                    font-weight: 500;
-                                }
+                                    for tick in root.ruler-ticks: Rectangle {
+                                        x: tick.x;
+                                        y: tick.major ? 12px : 17px;
+                                        width: 1px;
+                                        height: tick.major ? 13px : 7px;
+                                        background: tick.major ? #555965 : #30333c;
+                                    }
 
-                                ruler-scrub := TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => {
-                                        if (self.width > 0px) {
-                                            root.seek-fraction(self.pressed-x / self.width);
+                                    for tick in root.ruler-ticks: Text {
+                                        visible: tick.major;
+                                        x: tick.x + 3px;
+                                        y: 2px;
+                                        text: tick.label;
+                                        color: Palette.text-dim;
+                                        font-size: 9px;
+                                        font-weight: 500;
+                                    }
+
+                                    ruler-scrub := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => {
+                                            if (self.width > 0px) {
+                                                root.seek-fraction(self.pressed-x / self.width);
+                                            }
                                         }
                                     }
                                 }
                             }
+                        }
 
-                            // Per-track lanes, stacked.
-                            for track[idx] in root.tracks : TrackLane {
-                                x: 0;
-                                y: root.ruler-height + root.ruler-offset + idx * (root.lane-height + root.lane-gap);
-                                width: parent.width;
-                                height: root.lane-height;
-                                clips: track.clips;
-                                is-audio: track.is-audio;
-                                muted: track.muted;
-                                interactive: !track.display-only;
-                                accent-color: track.is-audio ? Palette.success : Palette.accent;
-                                selected-id: root.selected-id;
-                                px-per-sec: root.px-per-sec;
-                                drag-from-id: root.drag-from-id;
-                                clip-clicked(id)      => { root.clip-clicked(id); }
-                                remove-clicked(id)    => { root.remove-clicked(id); }
-                                drag-started(id)      => { root.drag-started(id); }
-                                drag-moved(id, dx)    => { root.drag-moved(id, dx); }
-                                drag-released(id, dx) => { root.drag-released(id, dx); }
-                                trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
-                                request-split(id)     => { root.request-split(id); }
-                                reveal-in-finder(id)  => { root.reveal-in-finder(id); }
-                                move-to-track(id, t)  => { root.move-to-track(id, t); }
-                            }
+                        // Lane area — scrolls on both axes.
+                        lanes-sv := ScrollView {
+                            viewport-x <=> root.h-scroll;
+                            viewport-y <=> root.v-scroll;
+                            viewport-width: max(root.total-width + 12px, self.visible-width);
+                            viewport-height: root.stack-height;
 
-                            // Drop indicator spans all lanes vertically.
-                            if root.drop-target-index >= 0 : DropIndicator {
-                                x: root.drop-indicator-x;
-                                y: root.ruler-height + root.ruler-offset;
-                                height: root.tracks.length * (root.lane-height + root.lane-gap) - root.lane-gap;
-                            }
-
-                            // Playhead spans the full content vertically.
                             Rectangle {
-                                visible: root.selected-id != "" && root.total-width > 0px;
-                                x: root.playhead-fraction * parent.width;
-                                y: 0;
-                                width: 1px;
-                                height: parent.height;
-                                background: Palette.accent-2;
-                            }
-                            Rectangle {
-                                visible: root.selected-id != "" && root.total-width > 0px;
-                                x: root.playhead-fraction * parent.width - 3px;
-                                y: 0;
-                                width: 7px;
-                                height: 5px;
-                                background: Palette.accent-2;
-                                border-radius: 1px;
+                                width: max(root.total-width + 12px, parent.width);
+                                height: root.stack-height;
+                                background: #0d0e12;
+
+                                // Vertical gridlines aligned with ruler ticks.
+                                for tick in root.ruler-ticks: Rectangle {
+                                    x: tick.x;
+                                    y: 0;
+                                    width: 1px;
+                                    height: parent.height;
+                                    background: tick.major ? #ffffff12 : #ffffff08;
+                                }
+
+                                // Per-track lanes, stacked.
+                                for track[idx] in root.tracks : TrackLane {
+                                    x: 0;
+                                    y: root.ruler-offset + idx * (root.lane-height + root.lane-gap);
+                                    width: parent.width;
+                                    height: root.lane-height;
+                                    clips: track.clips;
+                                    is-audio: track.is-audio;
+                                    muted: track.muted;
+                                    interactive: !track.display-only;
+                                    accent-color: track.is-audio ? Palette.success : Palette.accent;
+                                    selected-id: root.selected-id;
+                                    px-per-sec: root.px-per-sec;
+                                    drag-from-id: root.drag-from-id;
+                                    clip-clicked(id)      => { root.clip-clicked(id); }
+                                    remove-clicked(id)    => { root.remove-clicked(id); }
+                                    drag-started(id)      => { root.drag-started(id); }
+                                    drag-moved(id, dx)    => { root.drag-moved(id, dx); }
+                                    drag-released(id, dx) => { root.drag-released(id, dx); }
+                                    trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
+                                    request-split(id)     => { root.request-split(id); }
+                                    reveal-in-finder(id)  => { root.reveal-in-finder(id); }
+                                    move-to-track(id, t)  => { root.move-to-track(id, t); }
+                                }
+
+                                // Drop indicator spans all lanes vertically.
+                                if root.drop-target-index >= 0 : DropIndicator {
+                                    x: root.drop-indicator-x;
+                                    y: root.ruler-offset;
+                                    height: root.tracks.length * (root.lane-height + root.lane-gap) - root.lane-gap;
+                                }
+
+                                // Playhead spans the lane stack vertically.
+                                Rectangle {
+                                    visible: root.selected-id != "" && root.total-width > 0px;
+                                    x: root.playhead-fraction * parent.width;
+                                    y: 0;
+                                    width: 1px;
+                                    height: parent.height;
+                                    background: Palette.accent-2;
+                                }
+                                Rectangle {
+                                    visible: root.selected-id != "" && root.total-width > 0px;
+                                    x: root.playhead-fraction * parent.width - 3px;
+                                    y: 0;
+                                    width: 7px;
+                                    height: 5px;
+                                    background: Palette.accent-2;
+                                    border-radius: 1px;
+                                }
                             }
                         }
                     }

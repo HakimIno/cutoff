@@ -600,7 +600,31 @@ fn sync_preview(
         track.solo = ts.soloed.get(idx).copied().unwrap_or(false);
         track.locked = ts.locked.get(idx).copied().unwrap_or(false);
     }
-    let _ = cmd_tx.try_send(Command::OpenPreview { project: proj.clone() });
+
+    // Throttle preview updates to 30 FPS (~33ms) to avoid queue buildup during dragging.
+    // Ensure the final frame is rendered by spawning a delayed fallback task.
+    static LAST_SYNC: std::sync::OnceLock<std::sync::Mutex<std::time::Instant>> = std::sync::OnceLock::new();
+    let now = std::time::Instant::now();
+    let mut last_sync = LAST_SYNC.get_or_init(|| std::sync::Mutex::new(now - std::time::Duration::from_millis(100))).lock().unwrap();
+    
+    if now.duration_since(*last_sync) >= std::time::Duration::from_millis(33) {
+        *last_sync = now;
+        let _ = cmd_tx.try_send(Command::OpenPreview { project: proj.clone() });
+    } else {
+        let tx = cmd_tx.clone();
+        let proj_clone = proj.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if let Some(cell) = LAST_SYNC.get() {
+                if let Ok(mut last_sync) = cell.lock() {
+                    if std::time::Instant::now().duration_since(*last_sync) >= std::time::Duration::from_millis(45) {
+                        *last_sync = std::time::Instant::now();
+                        let _ = tx.try_send(Command::OpenPreview { project: proj_clone });
+                    }
+                }
+            }
+        });
+    }
 }
 
 /// Rebuild the UI tracks model (per-track lanes + flags) from the current
@@ -685,7 +709,22 @@ fn select_and_open(
         pv.frame_history.clear();
     }
 
+    let (proj_w, proj_h, clip_w, clip_h) = {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        let proj_res = pl.clips().first()
+            .map(|c| (c.info.profile.resolution.width as i32, c.info.profile.resolution.height as i32))
+            .unwrap_or((1920, 1080));
+        let clip_res = pl.clips().iter().find(|c| c.id == clip_id)
+            .map(|c| (c.info.profile.resolution.width as i32, c.info.profile.resolution.height as i32))
+            .unwrap_or((1920, 1080));
+        (proj_res.0, proj_res.1, clip_res.0, clip_res.1)
+    };
+
     if let Some(window) = weak.upgrade() {
+        window.set_project_width(proj_w);
+        window.set_project_height(proj_h);
+        window.set_selected_width(clip_w);
+        window.set_selected_height(clip_h);
         window.set_selected_id(SharedString::from(clip_id.to_string()));
         window.set_has_selection(true);
         window.set_selected_name(SharedString::from(name));
@@ -1655,6 +1694,7 @@ fn on_selected_clip_scale_changed(
                 c.scale = scale;
             }
         }
+        window.set_selected_scale(scale);
         sync_preview(&playlist, &tracks, &project, &cmd_tx);
     }
 }

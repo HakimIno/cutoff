@@ -58,10 +58,22 @@ export component PreviewPanel inherits Rectangle {
     in property <image> frame;
     in property <bool> playing;
 
+    in property <int> project-width: 1920;
+    in property <int> project-height: 1080;
+    in property <int> selected-width: 1920;
+    in property <int> selected-height: 1080;
+    in property <float> selected-scale: 1.0;
+    in property <int> selected-position-x: 0;
+    in property <int> selected-position-y: 0;
+
     callback play-toggle();
     callback step-frame(int);
     callback jump-start();
     callback jump-end();
+
+    callback scale-changed(float);
+    callback position-x-changed(int);
+    callback position-y-changed(int);
 
     background: Palette.surface;
     border-radius: Theme.radius-lg;
@@ -78,13 +90,218 @@ export component PreviewPanel inherits Rectangle {
             vertical-stretch: 1;
             clip: true;
 
+            // nw and nh as float/lengths
+            property <length> nw: root.project-width * 1px;
+            property <length> nh: root.project-height * 1px;
+            
+            // Aspect ratio of the project
+            property <float> aspect: root.project-height > 0 ? (root.project-width / root.project-height) : 16.0 / 9.0;
+            
+            // The display width and height of the video canvas container inside the image boundary
+            property <length> disp-w: (img.height > 0px && (img.width / img.height) > aspect) ? img.height * aspect : img.width;
+            property <length> disp-h: (img.height > 0px && (img.width / img.height) > aspect) ? img.height : (aspect > 0 ? img.width / aspect : img.width);
+            
+            // Center offsets of the video canvas container relative to the Image widget
+            property <length> disp-x: (img.width - disp-w) / 2;
+            property <length> disp-y: (img.height - disp-h) / 2;
+
+            property <float> scale-factor: (nw > 0px && nh > 0px) ? (disp-w / nw) : 1.0;
+
+            property <length> clip-w: root.selected-width * root.selected-scale * 1px * scale-factor;
+            property <length> clip-h: root.selected-height * root.selected-scale * 1px * scale-factor;
+            
+            property <length> clip-x: disp-x + (root.selected-position-x * 1px + (nw - root.selected-width * root.selected-scale * 1px) / 2) * scale-factor;
+            property <length> clip-y: disp-y + (root.selected-position-y * 1px + (nh - root.selected-height * root.selected-scale * 1px) / 2) * scale-factor;
+
             // Live frame (visible only when selection has produced a frame)
-            Image {
+            img := Image {
                 visible: root.has-selection;
                 source: root.frame;
                 image-fit: contain;
                 width: 100%;
                 height: 100%;
+            }
+
+            // Overlay borders and handles
+            if root.has-selection : Rectangle {
+                x: clip-x;
+                y: clip-y;
+                width: clip-w;
+                height: clip-h;
+                border-width: 1.5px;
+                border-color: Palette.accent; // System primary color accent boundary
+                
+                // Corners
+                // Top-Left
+                Rectangle {
+                    x: -4px; y: -4px;
+                    width: 8px; height: 8px;
+                    background: white;
+                    border-width: 1.5px;
+                    border-color: Palette.accent;
+                    border-radius: 1px;
+                }
+                // Top-Right
+                Rectangle {
+                    x: parent.width - 4px; y: -4px;
+                    width: 8px; height: 8px;
+                    background: white;
+                    border-width: 1.5px;
+                    border-color: Palette.accent;
+                    border-radius: 1px;
+                }
+                // Bottom-Left
+                Rectangle {
+                    x: -4px; y: parent.height - 4px;
+                    width: 8px; height: 8px;
+                    background: white;
+                    border-width: 1.5px;
+                    border-color: Palette.accent;
+                    border-radius: 1px;
+                }
+                // Bottom-Right
+                Rectangle {
+                    x: parent.width - 4px; y: parent.height - 4px;
+                    width: 8px; height: 8px;
+                    background: white;
+                    border-width: 1.5px;
+                    border-color: Palette.accent;
+                    border-radius: 1px;
+                }
+                // Top-Center
+                Rectangle {
+                    x: (parent.width - 8px) / 2; y: -4px;
+                    width: 8px; height: 8px;
+                    background: white;
+                    border-width: 1.5px;
+                    border-color: Palette.accent;
+                    border-radius: 1px;
+                }
+                // Bottom-Center
+                Rectangle {
+                    x: (parent.width - 8px) / 2; y: parent.height - 4px;
+                    width: 8px; height: 8px;
+                    background: white;
+                    border-width: 1.5px;
+                    border-color: Palette.accent;
+                    border-radius: 1px;
+                }
+                // Left-Center
+                Rectangle {
+                    x: -4px; y: (parent.height - 8px) / 2;
+                    width: 8px; height: 8px;
+                    background: white;
+                    border-width: 1.5px;
+                    border-color: Palette.accent;
+                    border-radius: 1px;
+                }
+                // Right-Center
+                Rectangle {
+                    x: parent.width - 4px; y: (parent.height - 8px) / 2;
+                    width: 8px; height: 8px;
+                    background: white;
+                    border-width: 1.5px;
+                    border-color: Palette.accent;
+                    border-radius: 1px;
+                }
+            }
+
+            // Global TouchArea covering the screen area for hit-testing and dragging
+            if root.has-selection : overlay-ta := TouchArea {
+                width: 100%;
+                height: 100%;
+
+                property <bool> is-dragging: false;
+                property <string> drag-type; // "move" or "scale"
+                
+                property <length> start-mouse-x;
+                property <length> start-mouse-y;
+                property <float> start-scale;
+                property <int> start-pos-x;
+                property <int> start-pos-y;
+                
+                property <length> center-x;
+                property <length> center-y;
+                property <length> start-dist;
+
+                property <length> mx: self.mouse-x;
+                property <length> my: self.mouse-y;
+                property <length> thresh: 12px;
+                
+                property <bool> near-tl: abs(self.mx - clip-x) < self.thresh && abs(self.my - clip-y) < self.thresh;
+                property <bool> near-tr: abs(self.mx - (clip-x + clip-w)) < self.thresh && abs(self.my - clip-y) < self.thresh;
+                property <bool> near-bl: abs(self.mx - clip-x) < self.thresh && abs(self.my - (clip-y + clip-h)) < self.thresh;
+                property <bool> near-br: abs(self.mx - (clip-x + clip-w)) < self.thresh && abs(self.my - (clip-y + clip-h)) < self.thresh;
+                
+                property <bool> near-t: abs(self.mx - (clip-x + clip-w/2)) < self.thresh && abs(self.my - clip-y) < self.thresh;
+                property <bool> near-b: abs(self.mx - (clip-x + clip-w/2)) < self.thresh && abs(self.my - (clip-y + clip-h)) < self.thresh;
+                property <bool> near-l: abs(self.mx - clip-x) < self.thresh && abs(self.my - (clip-y + clip-h/2)) < self.thresh;
+                property <bool> near-r: abs(self.mx - (clip-x + clip-w)) < self.thresh && abs(self.my - (clip-y + clip-h/2)) < self.thresh;
+
+                property <bool> near-handle: self.near-tl || self.near-tr || self.near-bl || self.near-br || self.near-t || self.near-b || self.near-l || self.near-r;
+                property <bool> inside-box: self.mx >= clip-x && self.mx <= clip-x + clip-w && self.my >= clip-y && self.my <= clip-y + clip-h;
+
+                mouse-cursor: self.is-dragging ? (self.drag-type == "scale" ? MouseCursor.nesw-resize : MouseCursor.move) : (
+                    self.near-tl || self.near-br ? MouseCursor.nwse-resize : (
+                        self.near-tr || self.near-bl ? MouseCursor.nesw-resize : (
+                            self.near-t || self.near-b ? MouseCursor.ns-resize : (
+                                self.near-l || self.near-r ? MouseCursor.ew-resize : (
+                                    self.inside-box ? MouseCursor.move : MouseCursor.default
+                                )
+                            )
+                        )
+                    )
+                );
+
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down) {
+                        if (self.near-handle) {
+                            self.is-dragging = true;
+                            self.drag-type = "scale";
+                            self.start-scale = root.selected-scale;
+                            self.center-x = clip-x + clip-w / 2;
+                            self.center-y = clip-y + clip-h / 2;
+                            
+                            let dx = self.mx - self.center-x;
+                            let dy = self.my - self.center-y;
+                            self.start-dist = Math.sqrt((dx / 1px) * (dx / 1px) + (dy / 1px) * (dy / 1px)) * 1px;
+                        } else if (self.inside-box) {
+                            self.is-dragging = true;
+                            self.drag-type = "move";
+                            self.start-mouse-x = self.mx;
+                            self.start-mouse-y = self.my;
+                            self.start-pos-x = root.selected-position-x;
+                            self.start-pos-y = root.selected-position-y;
+                        }
+                    } else if (e.kind == PointerEventKind.up) {
+                        self.is-dragging = false;
+                    }
+                }
+                
+                moved => {
+                    if (self.is-dragging && self.pressed) {
+                        if (self.drag-type == "scale") {
+                            let dx = self.mx - self.center-x;
+                            let dy = self.my - self.center-y;
+                            let curr-dist = Math.sqrt((dx / 1px) * (dx / 1px) + (dy / 1px) * (dy / 1px));
+                            let d-start = self.start-dist / 1px;
+                            if (d-start > 0.0) {
+                                let new-scale = self.start-scale * (curr-dist / d-start);
+                                let clamped-scale = max(0.1, min(2.0, new-scale));
+                                root.scale-changed(clamped-scale);
+                            }
+                        } else if (self.drag-type == "move") {
+                            let dx-screen = self.mx - self.start-mouse-x;
+                            let dy-screen = self.my - self.start-mouse-y;
+                            
+                            let dx-proj = (dx-screen / 1px) * (nw / disp-w);
+                            let dy-proj = (dy-screen / 1px) * (nh / disp-h);
+                            
+                            root.position-x-changed(self.start-pos-x + Math.round(dx-proj));
+                            root.position-y-changed(self.start-pos-y + Math.round(dy-proj));
+                        }
+                    }
+                }
             }
 
             // Empty state

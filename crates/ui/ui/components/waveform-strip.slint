@@ -1,22 +1,52 @@
 import { Palette } from "../styles/palette.slint";
 
-/// Renders pre-computed waveform peaks as a vertical-bar strip. Peaks are
-/// passed in as a `[float]` of |peak| values in 0..1 (one per visible bucket).
-/// The component scales bars to fit the available height.
+/// Renders pre-computed waveform min/max buckets around a center line.
+/// `peaks` remains as a fallback for older rows that only carry absolute peaks.
 export component WaveformStrip inherits Rectangle {
     in property <[float]> peaks;
+    in property <[float]> mins;
+    in property <[float]> maxs;
     in property <color> bar-color: Palette.accent-2;
     in property <color> bar-color-dim: Palette.accent;
 
     clip: true;
     background: transparent;
 
-    for peak[i] in root.peaks: Rectangle {
-        x: i * (root.width / max(root.peaks.length, 1));
-        y: (root.height - self.height) / 2;
-        width: root.width / max(root.peaks.length, 1) - 0.5px;
-        height: max(peak * root.height, 1px);
-        background: root.bar-color;
-        opacity: 0.7;
+    Rectangle {
+        y: root.height / 2;
+        width: 100%;
+        height: 1px;
+        background: root.bar-color-dim;
+        opacity: 0.38;
+    }
+
+    if root.mins.length > 0 && root.maxs.length > 0 : Rectangle {
+        for hi[i] in root.maxs: Rectangle {
+            property <float> lo: i < root.mins.length ? root.mins[i] : -hi;
+            property <float> top-value: max(-1, min(1, hi));
+            property <float> bottom-value: max(-1, min(1, self.lo));
+            property <length> bucket-width: root.width / max(root.maxs.length, 1);
+            property <length> top-y: root.height * (0.5 - self.top-value * 0.5);
+            property <length> bottom-y: root.height * (0.5 - self.bottom-value * 0.5);
+            x: i * self.bucket-width;
+            y: min(self.top-y, self.bottom-y);
+            width: max(self.bucket-width - 0.5px, 1px);
+            height: max(abs(self.bottom-y - self.top-y), 1px);
+            border-radius: 1px;
+            background: root.bar-color;
+            opacity: 0.72;
+        }
+    }
+
+    if root.mins.length == 0 || root.maxs.length == 0 : Rectangle {
+        for peak[i] in root.peaks: Rectangle {
+            x: i * (root.width / max(root.peaks.length, 1));
+            y: (root.height - self.height) / 2;
+            width: max(root.width / max(root.peaks.length, 1) - 0.5px, 1px);
+            height: max(peak * root.height, 1px);
+            border-radius: 1px;
+            background: root.bar-color;
+            opacity: 0.7;
+        }
     }
 }

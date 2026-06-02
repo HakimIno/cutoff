@@ -107,7 +107,7 @@ impl Dispatcher {
                 } => {
                     let event_tx = self.event_tx.clone();
                     tokio::task::spawn_blocking(move || {
-                        match decoder::extract_thumbnails(&path, &out_dir, count, 160, 90) {
+                        match decoder::extract_thumbnails(&path, &out_dir, count, 320, 180) {
                             Ok(paths) => {
                                 let _ = event_tx.send(Event::ThumbnailsReady { clip_id, paths });
                             }

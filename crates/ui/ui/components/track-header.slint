@@ -6,18 +6,29 @@ import { SpeakerIcon, SpeakerMutedIcon, EyeIcon, EyeOffIcon, LockClosedIcon, Loc
 component ChipToggle inherits Rectangle {
     in property <bool> active;
     in property <color> active-color: Palette.danger;
+    in property <string> label: "";
     out property <bool> has-hover: ta.has-hover;
     callback clicked();
-    width: 20px;
-    height: 20px;
-    border-radius: Theme.radius-sm;
+    width: 22px;
+    height: 18px;
+    border-radius: 3px;
     background: root.active
         ? root.active-color
-        : (ta.has-hover ? Palette.surface-3 : transparent);
+        : (ta.has-hover ? Palette.surface-3 : #101116);
+    border-width: 1px;
+    border-color: root.active ? root.active-color.brighter(0.25) : Palette.border;
     animate background { duration: 100ms; }
     ta := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
+    }
+    if root.label != "" : Text {
+        text: root.label;
+        color: root.active ? white : (ta.has-hover ? Palette.text : Palette.text-dim);
+        font-size: 9px;
+        font-weight: 800;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
     @children
 }
@@ -26,6 +37,7 @@ component ChipToggle inherits Rectangle {
 /// and lock toggles (DaVinci / CapCut style).
 export component TrackHeader inherits Rectangle {
     in property <string> label;
+    in property <int> clip-count: 0;
     in property <bool> is-audio: false;
     in property <color> badge-color: Palette.accent;
     in property <bool> muted;
@@ -38,115 +50,113 @@ export component TrackHeader inherits Rectangle {
     callback toggle-lock();
     callback delete-track();
 
-    background: root.muted ? Palette.danger-soft : Palette.surface-2;
-    border-radius: Theme.radius-sm;
+    property <string> display-label:
+        root.label == "V1" ? "Video 1" :
+        root.label == "V2" ? "Video 2" :
+        root.label == "A1" ? "Audio 1" :
+        root.label == "A2" ? "Audio 2" :
+        root.label;
+
+    background: root.muted ? Palette.danger-soft : #15171d;
+    border-radius: 2px;
     border-width: 1px;
     border-color: Palette.border;
     clip: true;
 
     Rectangle {
-        width: 3px;
+        width: 2px;
         height: 100%;
         background: root.badge-color;
         opacity: root.muted ? 0.45 : 0.9;
     }
 
-    HorizontalLayout {
+    VerticalLayout {
         padding-left: 10px;
-        padding-right: 6px;
+        padding-right: 7px;
+        padding-top: 5px;
+        padding-bottom: 5px;
         spacing: 4px;
-        alignment: center;
 
-        VerticalLayout {
-            spacing: 3px;
-            horizontal-stretch: 1;
-            alignment: center;
-
-            Rectangle {
-                width: root.is-audio ? 42px : 40px;
-                height: 15px;
-                border-radius: Theme.radius-sm;
-                background: root.badge-color.with-alpha(0.16);
-                border-width: 1px;
-                border-color: root.badge-color.with-alpha(0.35);
-                HorizontalLayout {
-                    padding-left: 5px;
-                    padding-right: 5px;
-                    Text {
-                        text: root.is-audio ? "AUDIO" : "VIDEO";
-                        color: root.badge-color.brighter(0.35);
-                        font-size: 8px;
-                        font-weight: 800;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-
+        HorizontalLayout {
+            spacing: 6px;
             Text {
-                text: root.label;
+                text: root.display-label;
                 color: root.locked ? Palette.text-muted : Palette.text;
-                font-size: Theme.font-xs;
-                font-weight: 700;
-                overflow: elide;
-            }
-        }
-
-        // Visibility (video) / mute (audio)
-        mute := ChipToggle {
-            active: root.muted;
-            active-color: Palette.danger;
-            clicked => { root.toggle-mute(); }
-            if root.is-audio && !root.muted : SpeakerIcon {
-                icon-color: mute.active ? white : Palette.text-muted;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-            }
-            if root.is-audio && root.muted : SpeakerMutedIcon {
-                icon-color: white;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-            }
-            if !root.is-audio && !root.muted : EyeIcon {
-                icon-color: Palette.text-muted;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-            }
-            if !root.is-audio && root.muted : EyeOffIcon {
-                icon-color: white;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-            }
-        }
-
-        solo := ChipToggle {
-            active: root.soloed;
-            active-color: Palette.accent;
-            clicked => { root.toggle-solo(); }
-            Text {
-                text: "S";
-                color: root.soloed ? white : (solo.has-hover ? Palette.text : Palette.text-dim);
                 font-size: 10px;
                 font-weight: 800;
-                horizontal-alignment: center;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            Text {
+                text: root.clip-count + (root.clip-count == 1 ? " Clip" : " Clips");
+                color: Palette.text-dim;
+                font-size: 8px;
                 vertical-alignment: center;
             }
         }
 
-        // Lock
-        lock := ChipToggle {
-            active: root.locked;
-            active-color: Palette.text-muted;
-            clicked => { root.toggle-lock(); }
-            if !root.locked : LockOpenIcon {
-                icon-color: lock.has-hover ? white : Palette.text-dim;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
+        HorizontalLayout {
+            spacing: 4px;
+
+            ChipToggle {
+                label: root.is-audio ? "A1" : "V1";
+                active: true;
+                active-color: root.badge-color;
             }
-            if root.locked : LockClosedIcon {
-                icon-color: white;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
+
+            // Visibility (video) / mute (audio)
+            mute := ChipToggle {
+                active: root.muted;
+                active-color: Palette.danger;
+                clicked => { root.toggle-mute(); }
+                if root.is-audio && !root.muted : SpeakerIcon {
+                    icon-color: mute.has-hover ? white : Palette.text-muted;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                if root.is-audio && root.muted : SpeakerMutedIcon {
+                    icon-color: white;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                if !root.is-audio && !root.muted : EyeIcon {
+                    icon-color: mute.has-hover ? white : Palette.text-muted;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                if !root.is-audio && root.muted : EyeOffIcon {
+                    icon-color: white;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
             }
+
+            ChipToggle {
+                label: "S";
+                active: root.soloed;
+                active-color: Palette.accent;
+                clicked => { root.toggle-solo(); }
+            }
+
+            // Lock
+            lock := ChipToggle {
+                active: root.locked;
+                active-color: Palette.text-muted;
+                clicked => { root.toggle-lock(); }
+                if !root.locked : LockOpenIcon {
+                    icon-color: lock.has-hover ? white : Palette.text-dim;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                if root.locked : LockClosedIcon {
+                    icon-color: white;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
         }
     }
 
