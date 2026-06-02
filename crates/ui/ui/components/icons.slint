@@ -1,9 +1,9 @@
 import { Palette } from "../styles/palette.slint";
 
-// Majesticons line icons (PNG, white glyph — tint with `colorize`).
-// Assets: assets/majesticons/ (from Iconify majesticons collection).
+// Solar bold icons (PNG, white glyph — tint with `colorize`).
+// Assets: assets/solar/ (from Iconify solar collection).
 
-component MajesticonsIcon inherits Image {
+component SolarIcon inherits Image {
     in property <color> icon-color: Palette.text;
     in property <image> glyph;
     source: root.glyph;
@@ -13,56 +13,56 @@ component MajesticonsIcon inherits Image {
     colorize: root.icon-color;
 }
 
-export component PlayIcon inherits MajesticonsIcon {
-    glyph: @image-url("../../../../assets/majesticons/majesticons--play-circle-line.png");
+export component PlayIcon inherits SolarIcon {
+    glyph: @image-url("../../../../assets/solar/solar--play-bold.png");
 }
 
-export component PauseIcon inherits MajesticonsIcon {
-    glyph: @image-url("../../../../assets/majesticons/majesticons--pause-line.png");
+export component PauseIcon inherits SolarIcon {
+    glyph: @image-url("../../../../assets/solar/solar--pause-bold.png");
 }
 
-export component SkipStartIcon inherits MajesticonsIcon {
-    glyph: @image-url("../../../../assets/majesticons/majesticons--backward-start-circle-line.png");
+export component SkipStartIcon inherits SolarIcon {
+    glyph: @image-url("../../../../assets/solar/solar--skip-previous-bold.png");
 }
 
-export component SkipEndIcon inherits MajesticonsIcon {
-    glyph: @image-url("../../../../assets/majesticons/majesticons--forward-end-circle-line.png");
+export component SkipEndIcon inherits SolarIcon {
+    glyph: @image-url("../../../../assets/solar/solar--skip-next-bold.png");
 }
 
-export component StepBackwardIcon inherits MajesticonsIcon {
-    glyph: @image-url("../../../../assets/majesticons/majesticons--rewind-line.png");
+export component StepBackwardIcon inherits SolarIcon {
+    glyph: @image-url("../../../../assets/solar/solar--rewind-back-bold.png");
 }
 
-export component StepForwardIcon inherits MajesticonsIcon {
-    glyph: @image-url("../../../../assets/majesticons/majesticons--fast-forward-line.png");
+export component StepForwardIcon inherits SolarIcon {
+    glyph: @image-url("../../../../assets/solar/solar--forward-bold.png");
 }
 
-export component CloseIcon inherits MajesticonsIcon {
+export component CloseIcon inherits SolarIcon {
     width: 12px;
     height: 12px;
-    glyph: @image-url("../../../../assets/majesticons/majesticons--close-line.png");
+    glyph: @image-url("../../../../assets/solar/solar--close-circle-bold.png");
 }
 
-export component SpeakerIcon inherits MajesticonsIcon {
-    glyph: @image-url("../../../../assets/majesticons/majesticons--speaker-line.png");
+export component SpeakerIcon inherits SolarIcon {
+    glyph: @image-url("../../../../assets/solar/solar--volume-bold.png");
 }
 
-export component SpeakerMutedIcon inherits MajesticonsIcon {
-    glyph: @image-url("../../../../assets/majesticons/majesticons--sound-off-line.png");
+export component SpeakerMutedIcon inherits SolarIcon {
+    glyph: @image-url("../../../../assets/solar/solar--volume-cross-bold.png");
 }
 
-export component EyeLineIcon inherits MajesticonsIcon {
-    glyph: @image-url("../../../../assets/majesticons/majesticons--eye-line.png");
+export component EyeLineIcon inherits SolarIcon {
+    glyph: @image-url("../../../../assets/solar/solar--eye-bold.png");
 }
 
-export component EyeOffLineIcon inherits MajesticonsIcon {
-    glyph: @image-url("../../../../assets/majesticons/majesticons--eye-off-line.png");
+export component EyeOffLineIcon inherits SolarIcon {
+    glyph: @image-url("../../../../assets/solar/solar--eye-closed-bold.png");
 }
 
-export component LockClosedIcon inherits MajesticonsIcon {
-    glyph: @image-url("../../../../assets/majesticons/majesticons--lock-line.png");
+export component LockClosedIcon inherits SolarIcon {
+    glyph: @image-url("../../../../assets/solar/solar--lock-bold.png");
 }
 
-export component LockOpenIcon inherits MajesticonsIcon {
-    glyph: @image-url("../../../../assets/majesticons/majesticons--unlock-open-line.png");
+export component LockOpenIcon inherits SolarIcon {
+    glyph: @image-url("../../../../assets/solar/solar--lock-unlocked-bold.png");
 }

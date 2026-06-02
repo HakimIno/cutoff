@@ -1166,3 +1166,134 @@ fn render_timeline_frame(
 
     Arc::from(canvas.as_slice())
 }
+
+// ── Performance harness ────────────────────────────────────────────────────
+//
+// These are micro-benchmarks, not correctness tests: they print per-frame
+// timings so we can tell whether the affine compositor and/or 4K decode keep up
+// with the frame budget. Run in RELEASE (debug numbers are meaningless):
+//
+//   cargo test --release -p video-merger-worker perf -- --nocapture --test-threads=1
+//
+// `perf_compositor` is self-contained; `perf_render_e2e` needs the sample clip
+// at /tmp/cutoff_test_10s.mp4 (and is skipped otherwise).
+#[cfg(test)]
+mod perf {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::Duration as StdDuration;
+    use video_merger_core::domain::{
+        Clip, CodecProfile, MediaInfo, Project, Resolution, TrackClip, TrackKind,
+    };
+
+    const BUDGET_30: f64 = 1000.0 / 30.0; // 33.3 ms
+    const BUDGET_60: f64 = 1000.0 / 60.0; // 16.7 ms
+
+    /// Time `iters` runs of `f`, return (avg_ms, min_ms, max_ms, p95_ms).
+    fn bench(iters: usize, mut f: impl FnMut(usize)) -> (f64, f64, f64, f64) {
+        let mut samples = Vec::with_capacity(iters);
+        for i in 0..iters {
+            let t = Instant::now();
+            f(i);
+            samples.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let sum: f64 = samples.iter().sum();
+        let p95_idx = ((iters as f64 * 0.95) as usize).min(iters - 1);
+        (sum / iters as f64, samples[0], samples[iters - 1], samples[p95_idx])
+    }
+
+    fn report(label: &str, (avg, min, max, p95): (f64, f64, f64, f64)) {
+        let verdict30 = if p95 <= BUDGET_30 { "OK@30" } else { "MISS@30" };
+        let verdict60 = if p95 <= BUDGET_60 { "OK@60" } else { "miss@60" };
+        println!(
+            "  {label:<34} avg={avg:6.2}ms  p95={p95:6.2}ms  (min={min:5.2} max={max:6.2})  [{verdict30} {verdict60}]"
+        );
+    }
+
+    #[test]
+    fn perf_compositor() {
+        // Preview-sized canvas + source (decoder already downscales to ≤1280).
+        let (w, h) = (1280usize, 720usize);
+        let mut base = vec![0u8; w * h * 4];
+        let mut src = vec![0u8; w * h * 4];
+        for i in (0..src.len()).step_by(4) {
+            src[i] = 200; src[i + 1] = 100; src[i + 2] = 50; src[i + 3] = 255;
+        }
+        let cx = w as f32 / 2.0;
+        let cy = h as f32 / 2.0;
+        let iters = 400;
+
+        println!("\ncomposite_affine — {w}x{h} canvas, {iters} iters (budget: 33.3ms@30, 16.7ms@60)");
+        report("scale 1.0 (no rotation)", bench(iters, |_| {
+            composite_affine(&mut base, w, h, &src, w, h, 0,0,0,0, 1.0,1.0, 0.0, false,false, 1.0, cx, cy);
+        }));
+        report("scale 1.5", bench(iters, |_| {
+            composite_affine(&mut base, w, h, &src, w, h, 0,0,0,0, 1.5,1.5, 0.0, false,false, 1.0, cx, cy);
+        }));
+        report("opacity 0.5 (alpha blend)", bench(iters, |_| {
+            composite_affine(&mut base, w, h, &src, w, h, 0,0,0,0, 1.0,1.0, 0.0, false,false, 0.5, cx, cy);
+        }));
+        report("rotation 30deg (trig path)", bench(iters, |_| {
+            composite_affine(&mut base, w, h, &src, w, h, 0,0,0,0, 1.0,1.0, 30.0, false,false, 1.0, cx, cy);
+        }));
+        report("rotation 30 + scale 1.5", bench(iters, |_| {
+            composite_affine(&mut base, w, h, &src, w, h, 0,0,0,0, 1.5,1.5, 30.0, false,false, 1.0, cx, cy);
+        }));
+    }
+
+    fn sample_project(rotation: f32, scale: f32) -> Option<Project> {
+        let path = PathBuf::from("/tmp/cutoff_test_10s.mp4");
+        if !path.exists() {
+            eprintln!("skipping perf_render_e2e: {} not present", path.display());
+            return None;
+        }
+        let mut clip = Clip::new(
+            path,
+            MediaInfo {
+                duration: StdDuration::from_secs(10),
+                profile: CodecProfile {
+                    video_codec: "h264".into(),
+                    audio_codec: "aac".into(),
+                    resolution: Resolution { width: 3840, height: 2160 },
+                    frame_rate_mhz: 30_000,
+                    pixel_format: "yuv420p".into(),
+                },
+            },
+        );
+        clip.rotation_deg = rotation;
+        clip.scale = scale;
+        let mut proj = Project::with_default_tracks();
+        let v1 = proj.track_index_by_name("V1").unwrap_or(1);
+        proj.tracks[v1].clips.push(TrackClip { clip, start_us: 0 });
+        let _ = TrackKind::Video;
+        Some(proj)
+    }
+
+    #[test]
+    fn perf_render_e2e() {
+        let frames = 240; // 8s @ 30fps of sequential playback
+        let scenarios: [(&str, f32, f32); 3] = [
+            ("untransformed (fast path)", 0.0, 1.0),
+            ("scale 1.5 (slow path)", 0.0, 1.5),
+            ("rotation 30 (slow path)", 30.0, 1.0),
+        ];
+        println!("\nrender_timeline_frame end-to-end — real 4K decode, {frames} frames (budget 33.3ms@30)");
+        for (label, rot, scale) in scenarios {
+            let Some(project) = sample_project(rot, scale) else { return };
+            let (nw, nh, _, _) = preview_meta(&project);
+            let ps = preview_scale_for(nw, nh);
+            let (width, height) = (scaled_dim(nw, ps), scaled_dim(nh, ps));
+            let mut decoders: HashMap<Uuid, DecoderState> = HashMap::new();
+            let mut canvas: Vec<u8> = Vec::new();
+            let step = 1_000_000i64 / 30;
+            // Warm up the decoder (first frame pays open + seek cost).
+            let _ = render_timeline_frame(&project, &mut decoders, ps, &mut canvas, 0, width, height);
+            let stats = bench(frames, |i| {
+                let t = step * i as i64;
+                let _ = render_timeline_frame(&project, &mut decoders, ps, &mut canvas, t, width, height);
+            });
+            report(label, stats);
+        }
+    }
+}
