@@ -44,6 +44,9 @@ export component AppWindow inherits Window {
     in property <float> selected-rotation: 0.0;
     in property <bool> selected-flip-h: false;
     in property <bool> selected-flip-v: false;
+    in property <float> selected-brightness: 0.0;
+    in property <float> selected-contrast: 1.0;
+    in property <float> selected-saturation: 1.0;
     in property <bool> selected-opacity-animated;
     in property <bool> selected-opacity-key;
     in property <bool> selected-scale-animated;
@@ -141,6 +144,9 @@ export component AppWindow inherits Window {
     callback selected-clip-rotation-changed(float);
     callback selected-clip-flip-h-changed(bool);
     callback selected-clip-flip-v-changed(bool);
+    callback selected-clip-brightness-changed(float);
+    callback selected-clip-contrast-changed(float);
+    callback selected-clip-saturation-changed(float);
     callback selected-clip-transform-gesture-begin();
     callback selected-clip-keyframe-toggle(int);
 
@@ -362,6 +368,9 @@ export component AppWindow inherits Window {
                     selected-rotation: root.selected-rotation;
                     selected-flip-h: root.selected-flip-h;
                     selected-flip-v: root.selected-flip-v;
+                    selected-brightness: root.selected-brightness;
+                    selected-contrast: root.selected-contrast;
+                    selected-saturation: root.selected-saturation;
                     selected-opacity-animated: root.selected-opacity-animated;
                     selected-opacity-key: root.selected-opacity-key;
                     selected-scale-animated: root.selected-scale-animated;
@@ -384,6 +393,9 @@ export component AppWindow inherits Window {
                     rotation-changed(r) => { root.selected-clip-rotation-changed(r); }
                     flip-h-changed(m) => { root.selected-clip-flip-h-changed(m); }
                     flip-v-changed(m) => { root.selected-clip-flip-v-changed(m); }
+                    brightness-changed(b) => { root.selected-clip-brightness-changed(b); }
+                    contrast-changed(c) => { root.selected-clip-contrast-changed(c); }
+                    saturation-changed(s) => { root.selected-clip-saturation-changed(s); }
                     transform-gesture-begin => { root.selected-clip-transform-gesture-begin(); }
                 }
             }

@@ -491,6 +491,36 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         });
     }
     {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let proj = state.project.clone();
+        window.on_selected_clip_brightness_changed(move |b| {
+            on_selected_clip_transform_f32(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), proj.clone(), b, |c, v| c.brightness = v);
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let proj = state.project.clone();
+        window.on_selected_clip_contrast_changed(move |c| {
+            on_selected_clip_transform_f32(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), proj.clone(), c, |clip, v| clip.contrast = v);
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let proj = state.project.clone();
+        window.on_selected_clip_saturation_changed(move |s| {
+            on_selected_clip_transform_f32(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), proj.clone(), s, |c, v| c.saturation = v);
+        });
+    }
+    {
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let undo = state.undo.clone();
@@ -753,7 +783,7 @@ fn select_and_open(
     clip_id: Uuid,
     initial_seek_us: Option<i64>,
 ) {
-    let (_path, name, codec, resolution, duration, fps, _trim_in_us, _trim_out_us, volume, muted, opacity, scale, position_x, position_y, scale_x, scale_y, rotation_deg, flip_h, flip_v) = {
+    let (_path, name, codec, resolution, duration, fps, _trim_in_us, _trim_out_us, volume, muted, opacity, scale, position_x, position_y, scale_x, scale_y, rotation_deg, flip_h, flip_v, brightness, contrast, saturation) = {
         let pl = playlist.lock().expect("playlist mutex poisoned");
         let Some(clip) = pl.clips().iter().find(|c| c.id == clip_id) else {
             return;
@@ -792,6 +822,9 @@ fn select_and_open(
             clip.rotation_deg,
             clip.flip_h,
             clip.flip_v,
+            clip.brightness,
+            clip.contrast,
+            clip.saturation,
         )
     };
 
@@ -845,6 +878,9 @@ fn select_and_open(
         window.set_selected_rotation(rotation_deg);
         window.set_selected_flip_h(flip_h);
         window.set_selected_flip_v(flip_v);
+        window.set_selected_brightness(brightness);
+        window.set_selected_contrast(contrast);
+        window.set_selected_saturation(saturation);
         window.set_playing(false);
     }
 

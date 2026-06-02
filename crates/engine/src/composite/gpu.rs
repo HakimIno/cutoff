@@ -18,6 +18,9 @@ pub struct GpuClipInput<'a> {
     pub opacity: f32,
     pub center_x: f32,
     pub center_y: f32,
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
 }
 
 #[repr(C)]
@@ -39,6 +42,10 @@ struct ClipUniforms {
     crop_b: f32,
     flip_h: u32,
     flip_v: u32,
+    brightness: f32,
+    contrast: f32,
+    saturation: f32,
+    _padding: f32,
 }
 
 impl ClipUniforms {
@@ -357,6 +364,10 @@ impl WgpuCompositor {
                 crop_b: clip.crop_b as f32,
                 flip_h: if clip.flip_h { 1 } else { 0 },
                 flip_v: if clip.flip_v { 1 } else { 0 },
+                brightness: clip.brightness,
+                contrast: clip.contrast,
+                saturation: clip.saturation,
+                _padding: 0.0,
             };
 
             let uniforms_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

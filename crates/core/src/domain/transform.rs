@@ -237,6 +237,9 @@ pub struct ResolvedTransform {
     pub flip_h: bool,
     pub flip_v: bool,
     pub crop: Option<Crop>,
+    pub brightness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
 }
 
 impl Default for ResolvedTransform {
@@ -251,6 +254,9 @@ impl Default for ResolvedTransform {
             flip_h: false,
             flip_v: false,
             crop: None,
+            brightness: 0.0,
+            contrast: 1.0,
+            saturation: 1.0,
         }
     }
 }
@@ -268,6 +274,9 @@ impl ResolvedTransform {
             && !self.flip_h
             && !self.flip_v
             && self.crop.map_or(true, |c| c.is_noop())
+            && self.brightness.abs() < 1e-3
+            && (self.contrast - 1.0).abs() < 1e-3
+            && (self.saturation - 1.0).abs() < 1e-3
     }
 }
 

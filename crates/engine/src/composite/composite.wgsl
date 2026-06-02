@@ -15,6 +15,10 @@ struct ClipUniforms {
     crop_b: f32,
     flip_h: u32,
     flip_v: u32,
+    brightness: f32,
+    contrast: f32,
+    saturation: f32,
+    padding: f32,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: ClipUniforms;
@@ -50,7 +54,7 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
 
     // Apply flip and local scale to unit position
     var local_x = unit_pos.x * csw * uniforms.scale_x;
-    var local_y = unit_pos.y * csh * uniforms.scale_y;
+    var local_y = -unit_pos.y * csh * uniforms.scale_y;
 
     if (uniforms.flip_h != 0u) {
         local_x = -local_x;
@@ -89,6 +93,20 @@ fn vs_main(@builtin(vertex_index) in_vertex_index: u32) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var color = textureSample(t_diffuse, s_diffuse, in.uv);
+
+    // Apply brightness
+    color = vec4<f32>(color.rgb + uniforms.brightness, color.a);
+
+    // Apply contrast
+    color = vec4<f32>((color.rgb - vec3<f32>(0.5)) * uniforms.contrast + vec3<f32>(0.5), color.a);
+
+    // Apply saturation
+    let luminance = dot(color.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    color = vec4<f32>(mix(vec3<f32>(luminance), color.rgb, uniforms.saturation), color.a);
+
+    // Clamp values to prevent overflow/distortion
+    color = clamp(color, vec4<f32>(0.0), vec4<f32>(1.0));
+
     color.a = color.a * uniforms.opacity;
     return color;
 }

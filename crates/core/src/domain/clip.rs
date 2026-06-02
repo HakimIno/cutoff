@@ -70,6 +70,23 @@ pub struct Clip {
     /// Per-channel keyframe animation. Empty by default → static transform.
     #[serde(default)]
     pub transform_keys: TransformKeys,
+    /// Brightness correction (-1.0 to 1.0, default 0.0)
+    #[serde(default = "default_brightness")]
+    pub brightness: f32,
+    /// Contrast correction (0.0 to 2.0, default 1.0)
+    #[serde(default = "default_contrast_saturation")]
+    pub contrast: f32,
+    /// Saturation correction (0.0 to 2.0, default 1.0)
+    #[serde(default = "default_contrast_saturation")]
+    pub saturation: f32,
+}
+
+fn default_brightness() -> f32 {
+    0.0
+}
+
+fn default_contrast_saturation() -> f32 {
+    1.0
 }
 
 fn default_volume() -> f32 {
@@ -109,6 +126,9 @@ impl Clip {
             flip_v: false,
             crop: None,
             transform_keys: TransformKeys::default(),
+            brightness: 0.0,
+            contrast: 1.0,
+            saturation: 1.0,
         }
     }
 
@@ -130,6 +150,9 @@ impl Clip {
             flip_h: self.flip_h,
             flip_v: self.flip_v,
             crop: self.crop.filter(|c| !c.is_noop()),
+            brightness: self.brightness,
+            contrast: self.contrast,
+            saturation: self.saturation,
         }
     }
 
