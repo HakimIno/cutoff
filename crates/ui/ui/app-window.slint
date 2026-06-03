@@ -6,6 +6,7 @@ import { PreviewPanel } from "components/preview-panel.slint";
 import { DetailsPanel } from "components/details-panel.slint";
 import { Timeline, RulerTick, TrackData } from "components/timeline.slint";
 import { ClipData } from "components/clip-card.slint";
+import { VuMeter } from "components/vu-meter.slint";
 
 export { RulerTick, TrackData }
 
@@ -13,8 +14,8 @@ export component AppWindow inherits Window {
     title: "cutoff — Pro Video Editor";
     preferred-width: 1320px;
     preferred-height: 820px;
-    min-width: 1000px;
-    min-height: 640px;
+    min-width: 1320px;
+    min-height: 820px;
     background: Palette.background;
 
     // Flat list of all clips — used by Sidebar and as an emptiness check.
@@ -92,6 +93,8 @@ export component AppWindow inherits Window {
     in property <bool> playing;
     in property <string> playhead-text: "00:00";
     in property <float> playhead-fraction: 0.0;
+    in property <float> audio-level-l: 0.0;
+    in property <float> audio-level-r: 0.0;
 
     // Ruler + zoom
     in property <[RulerTick]> ruler-ticks;
@@ -344,8 +347,10 @@ export component AppWindow inherits Window {
                             background: Palette.border;
                         }
                         Timeline {
-                            width: 100%;
+                            width: parent.width - 60px;
                             height: 100%;
+                            x: 0;
+                            y: 0;
                             tracks: root.tracks;
                             all-clips: root.clips;
                             ruler-ticks: root.ruler-ticks;
@@ -369,9 +374,6 @@ export component AppWindow inherits Window {
                             drag-released(id, dx, dy) => { root.drag-released(id, dx, dy); }
                             trim-released(id, right, dx) => { root.trim-released(id, right, dx); }
                             request-split(id) => {
-                                // Split at the current playhead — do NOT reselect
-                                // the clip first, or selection would reseek the
-                                // playhead to the clip's start and split at 0.
                                 root.split();
                             }
                             detach-audio(id) => { root.detach-audio(id); }
@@ -387,10 +389,20 @@ export component AppWindow inherits Window {
                             zoom-out => { root.zoom-out(); }
                             set-zoom(v) => { root.set-zoom(v); }
                         }
+                        VuMeter {
+                            x: parent.width - 60px;
+                            y: 0;
+                            width: 60px;
+                            height: 100%;
+                            left-level: root.audio-level-l;
+                            right-level: root.audio-level-r;
+                            left-peak: root.audio-level-l;
+                            right-peak: root.audio-level-r;
+                        }
                     }
                 }
 
-                DetailsPanel {
+            DetailsPanel {
                     has-selection: root.has-selection;
                     selected-name: root.selected-name;
                     selected-codec: root.selected-codec;

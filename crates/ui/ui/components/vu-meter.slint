@@ -1,0 +1,122 @@
+import { Palette } from "../styles/palette.slint";
+import { Theme } from "../styles/theme.slint";
+
+export component VuMeter inherits Rectangle {
+    width: 50px;
+    background: Palette.surface;
+    border-width: 1px;
+    border-color: Palette.border;
+    border-radius: 12px;
+
+    in property <float> left-level: 0.7;  // 0.0 to 1.0
+    in property <float> right-level: 0.65; // 0.0 to 1.0
+    in property <float> left-peak: 0.8;
+    in property <float> right-peak: 0.75;
+    
+    // Define the segments
+    property <int> num-segments: 40;
+    property <length> segment-spacing: 1px;
+
+    HorizontalLayout {
+        padding-top: 20px;
+        padding-bottom: 20px;
+        padding-left: 5px;
+        padding-right: 5px;
+        spacing: 5px;
+
+        // Scale Column
+        Rectangle {
+            width: 20px;
+            // The text labels for the dB scale
+            Text { y: parent.height * 0.0 - self.height/2; text: "0"; color: Palette.text-muted; font-size: 10px; x: parent.width - self.width; }
+            Text { y: parent.height * 0.125 - self.height/2; text: "-6"; color: Palette.text-muted; font-size: 10px; x: parent.width - self.width; }
+            Text { y: parent.height * 0.25 - self.height/2; text: "-12"; color: Palette.text-muted; font-size: 10px; x: parent.width - self.width; }
+            Text { y: parent.height * 0.375 - self.height/2; text: "-18"; color: Palette.text-muted; font-size: 10px; x: parent.width - self.width; }
+            Text { y: parent.height * 0.5 - self.height/2; text: "-24"; color: Palette.text-muted; font-size: 10px; x: parent.width - self.width; }
+            Text { y: parent.height * 0.75 - self.height/2; text: "-36"; color: Palette.text-muted; font-size: 10px; x: parent.width - self.width; }
+            Text { y: parent.height * 1.0 - self.height/2; text: "-48"; color: Palette.text-muted; font-size: 10px; x: parent.width - self.width; }
+            
+            // Small tick marks
+            Rectangle { y: parent.height * 0.0; x: parent.width - 4px; width: 4px; height: 1px; background: Palette.border; }
+            Rectangle { y: parent.height * 0.125; x: parent.width - 4px; width: 4px; height: 1px; background: Palette.border; }
+            Rectangle { y: parent.height * 0.25; x: parent.width - 4px; width: 4px; height: 1px; background: Palette.border; }
+            Rectangle { y: parent.height * 0.375; x: parent.width - 4px; width: 4px; height: 1px; background: Palette.border; }
+            Rectangle { y: parent.height * 0.5; x: parent.width - 4px; width: 4px; height: 1px; background: Palette.border; }
+            Rectangle { y: parent.height * 0.75; x: parent.width - 4px; width: 4px; height: 1px; background: Palette.border; }
+            Rectangle { y: parent.height * 1.0 - 1px; x: parent.width - 4px; width: 4px; height: 1px; background: Palette.border; }
+        }
+
+        // Left Channel
+        Rectangle {
+            width: 10px;
+            background: #1e1e1e;
+            
+            // Loop for drawing segments
+            for i in root.num-segments: Rectangle {
+                y: parent.height - (i + 1) * (parent.height / root.num-segments) + root.segment-spacing;
+                width: parent.width;
+                height: (parent.height / root.num-segments) - root.segment-spacing;
+                
+                // Color calculation based on height
+                // > -6dB (top 12.5%) -> Red (#ff3333)
+                // -6dB to -18dB (12.5% to 37.5%) -> Yellow (#ffcc00)
+                // < -18dB (bottom 62.5%) -> Green (#2ecc71)
+                property <color> seg-color: i > root.num-segments * 0.875 ? #ff3333 : (i > root.num-segments * 0.625 ? #ffcc00 : #2ecc71);
+                
+                // Opacity based on current level
+                background: (i / root.num-segments) < root.left-level ? seg-color : #222222;
+            }
+            
+            // Peak indicator line
+            Rectangle {
+                y: parent.height - (root.left-peak * parent.height);
+                width: parent.width;
+                height: 2px;
+                background: root.left-peak > 0.875 ? #ff3333 : (root.left-peak > 0.625 ? #ffcc00 : #2ecc71);
+                visible: root.left-peak > 0.0;
+            }
+            
+            Text {
+                y: parent.height + 5px;
+                text: "L";
+                color: Palette.text-muted;
+                font-size: 10px;
+                horizontal-alignment: center;
+                width: parent.width;
+            }
+        }
+
+        // Right Channel
+        Rectangle {
+            width: 10px;
+            background: #1e1e1e;
+            
+            for i in root.num-segments: Rectangle {
+                y: parent.height - (i + 1) * (parent.height / root.num-segments) + root.segment-spacing;
+                width: parent.width;
+                height: (parent.height / root.num-segments) - root.segment-spacing;
+                
+                property <color> seg-color: i > root.num-segments * 0.875 ? #ff3333 : (i > root.num-segments * 0.625 ? #ffcc00 : #2ecc71);
+                
+                background: (i / root.num-segments) < root.right-level ? seg-color : #222222;
+            }
+            
+            Rectangle {
+                y: parent.height - (root.right-peak * parent.height);
+                width: parent.width;
+                height: 2px;
+                background: root.right-peak > 0.875 ? #ff3333 : (root.right-peak > 0.625 ? #ffcc00 : #2ecc71);
+                visible: root.right-peak > 0.0;
+            }
+            
+            Text {
+                y: parent.height + 5px;
+                text: "R";
+                color: Palette.text-muted;
+                font-size: 10px;
+                horizontal-alignment: center;
+                width: parent.width;
+            }
+        }
+    }
+}

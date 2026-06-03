@@ -196,20 +196,22 @@ pub fn spawn_preview(
     project: Project,
     event_tx: tokio_mpsc::UnboundedSender<Event>,
 ) -> PreviewHandle {
-    let (audio_tx, audio_join, audio_clock) = match AudioOutput::new() {
+    let (audio_tx, audio_join, audio_clock, audio_peak_l, audio_peak_r) = match AudioOutput::new() {
         Ok(output) => {
             let clock = output.frames_played_handle();
+            let peak_l = output.peak_l_handle();
+            let peak_r = output.peak_r_handle();
             let (tx, rx) = std_mpsc::channel::<AudioCtrl>();
             let proj_a = project.clone();
             let join = thread::Builder::new()
                 .name("cutoff-preview-audio".into())
                 .spawn(move || audio_loop(proj_a, output, rx))
                 .expect("audio preview thread spawn");
-            (Some(tx), Some(join), Some(clock))
+            (Some(tx), Some(join), Some(clock), Some(peak_l), Some(peak_r))
         }
         Err(e) => {
             tracing::warn!(error = %e, "audio output unavailable");
-            (None, None, None)
+            (None, None, None, None, None)
         }
     };
 
@@ -239,7 +241,7 @@ pub fn spawn_preview(
     let present_join = thread::Builder::new()
         .name("cutoff-preview-present".into())
         .spawn(move || {
-            present_loop(proj_p, present_rx, pic_rx, render_tx_for_present, event_tx, audio_clock, gen_p);
+            present_loop(proj_p, present_rx, pic_rx, render_tx_for_present, event_tx, audio_clock, audio_peak_l, audio_peak_r, gen_p);
         })
         .expect("present preview thread spawn");
 
@@ -884,6 +886,8 @@ fn present_loop(
     render_tx: std_mpsc::Sender<RenderCtrl>,
     event_tx: tokio_mpsc::UnboundedSender<Event>,
     audio_clock: Option<Arc<AtomicU32>>,
+    audio_peak_l: Option<Arc<AtomicU32>>,
+    audio_peak_r: Option<Arc<AtomicU32>>,
     generation: Arc<AtomicU64>,
 ) {
     let mut playing = false;
@@ -905,6 +909,7 @@ fn present_loop(
     let mut project_duration_us = project.duration_us();
     let mut frame_interval = Duration::from_secs_f32(fps_den as f32 / fps_num as f32);
     let mut next_frame_due = Instant::now();
+    let mut last_meter_emit = Instant::now();
 
     let _ = event_tx.send(Event::PreviewOpened {
         clip_id: Uuid::nil(),
@@ -982,6 +987,16 @@ fn present_loop(
                 Ok(c) => maybe = Some(c),
                 Err(std_mpsc::TryRecvError::Empty) => break,
                 Err(std_mpsc::TryRecvError::Disconnected) => return,
+            }
+        }
+
+        let now = Instant::now();
+        if now.duration_since(last_meter_emit).as_millis() >= 33 {
+            last_meter_emit = now;
+            if let (Some(l), Some(r)) = (audio_peak_l.as_ref(), audio_peak_r.as_ref()) {
+                let peak_l = f32::from_bits(l.load(Ordering::Relaxed));
+                let peak_r = f32::from_bits(r.load(Ordering::Relaxed));
+                let _ = event_tx.send(Event::AudioMeter { peak_l, peak_r });
             }
         }
 

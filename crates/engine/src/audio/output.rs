@@ -33,6 +33,8 @@ pub struct AudioOutput {
     pub frames_played: Arc<AtomicU32>,
     pub muted: Arc<AtomicBool>,
     pub volume_milli: Arc<AtomicU32>, // 1000 = 100 %
+    pub peak_l: Arc<AtomicU32>, // f32 encoded as u32 via to_bits
+    pub peak_r: Arc<AtomicU32>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -72,10 +74,14 @@ impl AudioOutput {
         let frames_played = Arc::new(AtomicU32::new(0));
         let muted = Arc::new(AtomicBool::new(false));
         let volume_milli = Arc::new(AtomicU32::new(1000));
+        let peak_l = Arc::new(AtomicU32::new(0));
+        let peak_r = Arc::new(AtomicU32::new(0));
 
         let frames_played_cb = frames_played.clone();
         let muted_cb = muted.clone();
         let vol_cb = volume_milli.clone();
+        let peak_l_cb = peak_l.clone();
+        let peak_r_cb = peak_r.clone();
 
         let stream = match sample_format {
             SampleFormat::F32 => build_stream::<f32>(
@@ -85,6 +91,8 @@ impl AudioOutput {
                 frames_played_cb,
                 muted_cb,
                 vol_cb,
+                peak_l_cb,
+                peak_r_cb,
                 |v| v,
             )?,
             SampleFormat::I16 => build_stream::<i16>(
@@ -94,6 +102,8 @@ impl AudioOutput {
                 frames_played_cb,
                 muted_cb,
                 vol_cb,
+                peak_l_cb,
+                peak_r_cb,
                 |v| (v * i16::MAX as f32).clamp(i16::MIN as f32, i16::MAX as f32) as i16,
             )?,
             SampleFormat::U16 => build_stream::<u16>(
@@ -103,6 +113,8 @@ impl AudioOutput {
                 frames_played_cb,
                 muted_cb,
                 vol_cb,
+                peak_l_cb,
+                peak_r_cb,
                 |v| {
                     let mid = (u16::MAX as f32) * 0.5;
                     (mid + v * mid).clamp(0.0, u16::MAX as f32) as u16
@@ -125,6 +137,8 @@ impl AudioOutput {
             frames_played,
             muted,
             volume_milli,
+            peak_l,
+            peak_r,
         })
     }
 
@@ -149,6 +163,14 @@ impl AudioOutput {
     pub fn frames_played_handle(&self) -> Arc<AtomicU32> {
         self.frames_played.clone()
     }
+
+    pub fn peak_l_handle(&self) -> Arc<AtomicU32> {
+        self.peak_l.clone()
+    }
+
+    pub fn peak_r_handle(&self) -> Arc<AtomicU32> {
+        self.peak_r.clone()
+    }
 }
 
 fn build_stream<T>(
@@ -158,6 +180,8 @@ fn build_stream<T>(
     frames_played: Arc<AtomicU32>,
     muted: Arc<AtomicBool>,
     volume_milli: Arc<AtomicU32>,
+    peak_l_arc: Arc<AtomicU32>,
+    peak_r_arc: Arc<AtomicU32>,
     convert: fn(f32) -> T,
 ) -> Result<Stream, AudioOutputError>
 where
@@ -170,6 +194,9 @@ where
             move |out: &mut [T], _info| {
                 let muted_now = muted.load(Ordering::Relaxed);
                 let vol = volume_milli.load(Ordering::Relaxed) as f32 / 1000.0;
+                let mut max_l = 0.0f32;
+                let mut max_r = 0.0f32;
+
                 for chunk in out.chunks_mut(CHANNELS as usize) {
                     let mut sample_l = 0.0f32;
                     let mut sample_r = 0.0f32;
@@ -186,11 +213,25 @@ where
                         sample_l *= vol;
                         sample_r *= vol;
                     }
+                    
+                    max_l = max_l.max(sample_l.abs());
+                    max_r = max_r.max(sample_r.abs());
+
                     chunk[0] = convert(sample_l);
                     if chunk.len() > 1 {
                         chunk[1] = convert(sample_r);
                     }
                 }
+                
+                // Extremely simple envelope decay to simulate VU meter dropoff
+                let current_peak_l = f32::from_bits(peak_l_arc.load(Ordering::Relaxed));
+                let new_peak_l = max_l.max(current_peak_l * 0.85); // 0.85 is decay factor per buffer
+                peak_l_arc.store(new_peak_l.to_bits(), Ordering::Relaxed);
+                
+                let current_peak_r = f32::from_bits(peak_r_arc.load(Ordering::Relaxed));
+                let new_peak_r = max_r.max(current_peak_r * 0.85);
+                peak_r_arc.store(new_peak_r.to_bits(), Ordering::Relaxed);
+
                 let frames = (out.len() / CHANNELS as usize) as u32;
                 frames_played.fetch_add(frames, Ordering::Relaxed);
             },

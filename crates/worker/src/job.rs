@@ -97,6 +97,10 @@ pub enum Event {
     PreviewEnded {
         clip_id: ClipId,
     },
+    AudioMeter {
+        peak_l: f32,
+        peak_r: f32,
+    },
     ThumbnailsReady {
         clip_id: ClipId,
         paths: Vec<PathBuf>,

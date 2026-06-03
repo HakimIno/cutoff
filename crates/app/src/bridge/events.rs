@@ -255,6 +255,12 @@ fn apply(window: &AppWindow, event: Event, state: &BridgeState, cmd_tx: &mpsc::S
             ));
             window.set_playhead_fraction(global_fraction.clamp(0.0, 1.0));
         }
+        Event::AudioMeter { peak_l, peak_r } => {
+            let lin_to_db = |lin: f32| if lin <= 0.0001 { -100.0 } else { 20.0 * lin.log10() };
+            let db_to_level = |db: f32| ((db + 48.0) / 48.0).clamp(0.0, 1.0);
+            window.set_audio_level_l(db_to_level(lin_to_db(peak_l)));
+            window.set_audio_level_r(db_to_level(lin_to_db(peak_r)));
+        }
         Event::PreviewEnded { .. } => {
             {
                 let mut pv = state.preview.lock().expect("preview mutex poisoned");
