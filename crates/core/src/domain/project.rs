@@ -106,11 +106,14 @@ impl Project {
                 n => (n as usize).min(project.tracks.len().saturating_sub(1)),
             };
             let cursor = cursors.entry(track_idx).or_insert(0);
+            // Honor an explicit position if the clip pins one; otherwise pack
+            // it right after the previous clip on this track.
+            let start_us = clip.start_us.unwrap_or(*cursor);
             project.tracks[track_idx].clips.push(TrackClip {
                 clip: clip.clone(),
-                start_us: *cursor,
+                start_us,
             });
-            *cursor += dur_us;
+            *cursor = start_us + dur_us;
         }
         project
     }
@@ -223,11 +226,14 @@ impl Project {
         for clip in playlist.clips() {
             let track_idx = self.track_index_for_video_track_value(clip.video_track);
             let cursor = cursors.entry(track_idx).or_insert(0);
+            // Honor an explicit position if the clip pins one; otherwise pack
+            // it right after the previous clip on this track.
+            let start_us = clip.start_us.unwrap_or(*cursor);
             self.tracks[track_idx].clips.push(TrackClip {
                 clip: clip.clone(),
-                start_us: *cursor,
+                start_us,
             });
-            *cursor += clip.effective_duration_us();
+            *cursor = start_us + clip.effective_duration_us();
         }
     }
 
@@ -409,6 +415,27 @@ mod tests {
         assert_eq!(v1.clips.len(), 2);
         assert_eq!(v1.clips[0].start_us, 0);
         assert_eq!(v1.clips[1].start_us, 5_000_000);
+    }
+
+    #[test]
+    fn explicit_start_us_creates_a_gap_while_none_packs() {
+        // First clip packs at 0 (None). Second clip pins start at 10s, leaving
+        // a 5s gap after the 5s first clip. Third clip (None) packs right after
+        // the pinned clip's end (10s + 3s = 13s), not after the first clip.
+        let mut pl = crate::domain::playlist::Playlist::new();
+        let a = make_clip(5.0); // None → 0
+        let mut b = make_clip(3.0);
+        b.start_us = Some(10_000_000); // pinned at 10s
+        let c = make_clip(2.0); // None → packs after b
+        pl.push(a);
+        pl.push(b);
+        pl.push(c);
+        let proj = Project::from_playlist(&pl);
+
+        let v1 = &proj.tracks[proj.track_index_by_name("V1").unwrap()];
+        assert_eq!(v1.clips[0].start_us, 0, "first packs at 0");
+        assert_eq!(v1.clips[1].start_us, 10_000_000, "second honors its pin → gap");
+        assert_eq!(v1.clips[2].start_us, 13_000_000, "third packs after pinned end");
     }
 
     #[test]

@@ -38,6 +38,13 @@ pub struct Clip {
     /// load cleanly without migration logic.
     #[serde(default)]
     pub video_track: u8,
+    /// Absolute timeline position (microseconds from the start of the track).
+    /// `None` means "auto/packed" — the clip is placed right after the
+    /// previous clip on its track (legacy sequential behaviour). `Some(v)`
+    /// pins the clip to an explicit position, enabling gaps and free drag.
+    /// Defaults to `None` so v1 projects load and pack exactly as before.
+    #[serde(default)]
+    pub start_us: Option<i64>,
     /// Opacity (0.0 to 1.0)
     #[serde(default = "default_opacity")]
     pub opacity: f32,
@@ -118,6 +125,7 @@ impl Clip {
             muted: false,
             waveform_path: None,
             video_track: 0,
+            start_us: None,
             opacity: 1.0,
             scale: 1.0,
             position_x: 0,
