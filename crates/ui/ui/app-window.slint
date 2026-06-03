@@ -140,6 +140,7 @@ export component AppWindow inherits Window {
     callback reveal-in-finder(string);
     callback toggle-master-mute();
     callback move-to-track(string, int);
+    callback detach-audio(string);
     callback toggle-track-mute(int);
     callback toggle-track-solo(int);
     callback toggle-track-lock(int);
@@ -362,6 +363,7 @@ export component AppWindow inherits Window {
                                 // playhead to the clip's start and split at 0.
                                 root.split();
                             }
+                            detach-audio(id) => { root.detach-audio(id); }
                             reveal-in-finder(id) => { root.reveal-in-finder(id); }
                             move-to-track(id, t) => { root.move-to-track(id, t); }
                             toggle-track-mute(t) => { root.toggle-track-mute(t); }

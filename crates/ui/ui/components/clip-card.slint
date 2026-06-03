@@ -52,6 +52,7 @@ export component ClipBlock inherits Rectangle {
     callback drag-released(string, length);
     callback trim-released(string, bool, length);  // (id, is_right_handle, delta_px)
     callback request-split(string);
+    callback detach-audio(string);
     callback reveal-in-finder(string);
     callback move-to-track(string, int);
 
@@ -122,6 +123,10 @@ export component ClipBlock inherits Rectangle {
             MenuItem {
                 title: "Split at playhead";
                 activated => { root.request-split(root.data.id); }
+            }
+            MenuItem {
+                title: "Detach audio";
+                activated => { root.detach-audio(root.data.id); }
             }
             MenuItem {
                 title: "Move to V2";

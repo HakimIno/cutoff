@@ -30,6 +30,11 @@ pub struct Clip {
     /// Per-clip mute toggle.
     #[serde(default)]
     pub muted: bool,
+    /// Set on a *video* clip whose audio has been detached into a separate
+    /// audio clip (see `services::detach_audio`). Its own embedded audio is
+    /// then silenced during playback so the detached copy isn't doubled.
+    #[serde(default)]
+    pub audio_detached: bool,
     /// Cached waveform peaks path (runtime-only).
     #[serde(default, skip)]
     pub waveform_path: Option<PathBuf>,
@@ -130,6 +135,7 @@ impl Clip {
             thumbnails: Vec::new(),
             volume: 1.0,
             muted: false,
+            audio_detached: false,
             waveform_path: None,
             video_track: 0,
             start_us: None,

@@ -336,6 +336,18 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
+        let zoom = state.zoom.clone();
+        let undo = state.undo.clone();
+        let tracks = state.tracks.clone();
+        let proj = state.project.clone();
+        window.on_detach_audio(move |id| {
+            on_detach_audio(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), proj.clone(), zoom.clone(), undo.clone(), id)
+        });
+    }
+    {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
         let tracks = state.tracks.clone();
         let proj = state.project.clone();
         window.on_toggle_track_mute(move |idx| on_toggle_track_mute(weak.clone(), tx.clone(), pl.clone(), tracks.clone(), proj.clone(), idx));
@@ -1581,6 +1593,38 @@ fn on_move_to_track(
                 c.video_track = target_track;
                 break;
             }
+        }
+    }
+    if let Some(window) = weak.upgrade() {
+        {
+            let pl = playlist.lock().expect("playlist mutex poisoned");
+            let z = *zoom.lock().expect("zoom mutex poisoned");
+            models::sync_clips(&window, &pl);
+            timeline_view::refresh_ruler(&window, &pl, z);
+        }
+        refresh_tracks_ui(&window, &playlist, &tracks, &project);
+    }
+    sync_preview(&playlist, &tracks, &project, &cmd_tx);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn on_detach_audio(
+    weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
+    project: super::SharedProject,
+    zoom: SharedZoom,
+    undo: SharedUndo,
+    id: SharedString,
+) {
+    let Ok(uuid) = Uuid::parse_str(id.as_str()) else { return };
+    {
+        let mut pl = playlist.lock().expect("playlist mutex poisoned");
+        checkpoint(&undo, &pl);
+        if let Err(err) = services::detach_audio(&mut pl, uuid) {
+            tracing::warn!(error = %err, "detach audio failed");
+            return;
         }
     }
     if let Some(window) = weak.upgrade() {

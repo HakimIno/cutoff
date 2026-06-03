@@ -269,8 +269,11 @@ impl DecoderState {
         }
     }
 
-    fn get_frame_at(&mut self, target_us: i64) -> Option<DecodedFrame> {
-        let threshold_us = 200_000; // 200ms
+    fn get_frame_at(&mut self, target_us: i64, check_cancel: &mut impl FnMut() -> bool) -> Option<DecodedFrame> {
+        // Increase threshold to 1 second (1,000,000 us). For scrubs within 1s, it's faster
+        // to sequentially decode (cheaply, without RGBA conversion) than to flush the decoder
+        // buffer, do a container seek to a keyframe, and decode back up to the target.
+        let threshold_us = 1_000_000;
 
         let needs_seek = match self.last_pts_us {
             None => true,
@@ -290,6 +293,9 @@ impl DecoderState {
         // what lets preview keep up with high-fps 4K sources: skipped frames
         // cost a bare decode, not a full RGBA conversion.
         loop {
+            if check_cancel() {
+                return None;
+            }
             match self.decoder.decode_next() {
                 Ok(Some(pts_us)) => {
                     self.last_pts_us = Some(pts_us);
@@ -591,6 +597,11 @@ fn audio_loop(
                 if track.muted {
                     continue;
                 }
+                // This clip's audio was detached into a separate audio clip —
+                // play silence here so the sound isn't doubled.
+                if tc.clip.audio_detached {
+                    continue;
+                }
 
                 let state = match audio_decoders.get_mut(&tc.clip.id) {
                     Some(s) => s,
@@ -702,6 +713,8 @@ fn render_loop(
     // A frame that was rendered but couldn't be enqueued (queue full); retried
     // before rendering anything new so we never decode the same frame twice.
     let mut pending_out: Option<PictureItem> = None;
+    // A control message (like a new Seek) we peeked at to preempt rendering.
+    let mut pending_ctrl: Option<RenderCtrl> = None;
 
     let (nw, nh, mut fps_num, mut fps_den) = preview_meta(&project);
     let mut preview_scale = preview_scale_for(nw, nh);
@@ -722,7 +735,9 @@ fn render_loop(
         // Block for control only when fully idle (paused with nothing buffered
         // to flush and no scrub frame owed); otherwise poll so we stay producing.
         let busy = playing || pending_out.is_some() || force_one;
-        let first_ctrl = if busy {
+        let first_ctrl = if let Some(c) = pending_ctrl.take() {
+            Some(c)
+        } else if busy {
             match ctrl_rx.try_recv() {
                 Ok(c) => Some(c),
                 Err(std_mpsc::TryRecvError::Empty) => None,
@@ -805,11 +820,38 @@ fn render_loop(
             continue;
         }
 
-        let rgba = render_timeline_frame(
+        // --- HIGH PERFORMANCE: PREEMPTIVE FRAME DROP ---
+        // If the user is scrubbing rapidly, `ctrl_rx` might already contain the next Seek.
+        // We check this BEFORE the heavy rendering phase. If a new Seek is waiting,
+        // we skip rendering the current stale frame entirely, preventing the render thread
+        // from blocking the UI with useless work.
+        if force_one && !playing {
+            if let Ok(c) = ctrl_rx.try_recv() {
+                pending_ctrl = Some(c);
+                continue; // Skip the heavy render and process the new Seek
+            }
+        }
+
+        let rgba_opt = render_timeline_frame(
             &project, &mut decoders, preview_scale, &mut canvas,
             compositor.as_mut(),
             render_head_us, width, height,
+            || {
+                if force_one && !playing {
+                    if let Ok(c) = ctrl_rx.try_recv() {
+                        pending_ctrl = Some(c);
+                        return true;
+                    }
+                }
+                false
+            }
         );
+
+        let rgba = match rgba_opt {
+            Some(r) => r,
+            None => continue,
+        };
+
         let item = PictureItem {
             gen: my_gen,
             frame: DecodedFrame { width, height, pts_us: render_head_us, rgba },
@@ -987,8 +1029,10 @@ fn present_loop(
             // If video has fallen far behind the audio clock (decode can't keep
             // up), ask the render thread to jump forward to the clock so we
             // resync instead of grinding through frames that are already late.
-            if target_local_us - last_delivered_pts_us > 250_000
-                && target_local_us - last_resync_us > 250_000
+            // Tolerance increased to 500ms (0.5s) to avoid forcing repeated heavy seeks 
+            // when the decoder is already struggling.
+            if target_local_us - last_delivered_pts_us > 500_000
+                && target_local_us - last_resync_us > 1_000_000
             {
                 let gen = generation.fetch_add(1, Ordering::AcqRel) + 1;
                 cur_gen = gen;
@@ -1096,7 +1140,8 @@ fn render_timeline_frame(
     t_us: i64,
     width: u32,
     height: u32,
-) -> Arc<[u8]> {
+    mut check_cancel: impl FnMut() -> bool,
+) -> Option<Arc<[u8]>> {
     let mut active = video_merger_engine::composite::active_clips_at(project, t_us);
     // Higher video tracks (V2) composite on top of lower ones (V1).
     active.sort_by_key(|(track_idx, _)| match project.tracks[*track_idx].name.as_str() {
@@ -1113,10 +1158,12 @@ fn render_timeline_frame(
         let src_us = rel_us + tc.clip.trim_in_us();
         if tc.clip.resolved_transform(rel_us).is_identity() {
             if let Some(state) = decoder_for(decoders, tc, preview_scale) {
-                if let Some(frame) = state.get_frame_at(src_us) {
+                if let Some(frame) = state.get_frame_at(src_us, &mut check_cancel) {
                     if frame.width == width && frame.height == height {
-                        return frame.rgba;
+                        return Some(frame.rgba);
                     }
+                } else {
+                    return None;
                 }
             }
         }
@@ -1136,8 +1183,10 @@ fn render_timeline_frame(
         let xf = tc.clip.resolved_transform(rel_us);
 
         if let Some(state) = decoder_for(decoders, tc, preview_scale) {
-            if let Some(frame) = state.get_frame_at(src_us) {
+            if let Some(frame) = state.get_frame_at(src_us, &mut check_cancel) {
                 decoded_frames.push((frame, xf));
+            } else {
+                return None;
             }
         }
     }
@@ -1184,7 +1233,7 @@ fn render_timeline_frame(
 
         match comp.composite(width as usize, height as usize, canvas.as_mut_slice(), &gpu_inputs) {
             Ok(()) => {
-                return Arc::from(canvas.as_slice());
+                return Some(Arc::from(canvas.as_slice()));
             }
             Err(e) => {
                 tracing::error!("GPU Compositing failed: {}. Falling back to CPU.", e);
@@ -1222,7 +1271,7 @@ fn render_timeline_frame(
         );
     }
 
-    Arc::from(canvas.as_slice())
+    Some(Arc::from(canvas.as_slice()))
 }
 
 // ── Performance harness ────────────────────────────────────────────────────
@@ -1346,10 +1395,10 @@ mod perf {
             let mut canvas: Vec<u8> = Vec::new();
             let step = 1_000_000i64 / 30;
             // Warm up the decoder (first frame pays open + seek cost).
-            let _ = render_timeline_frame(&project, &mut decoders, ps, &mut canvas, None, 0, width, height);
+            let _ = render_timeline_frame(&project, &mut decoders, ps, &mut canvas, None, 0, width, height, || false);
             let stats = bench(frames, |i| {
                 let t = step * i as i64;
-                let _ = render_timeline_frame(&project, &mut decoders, ps, &mut canvas, None, t, width, height);
+                let _ = render_timeline_frame(&project, &mut decoders, ps, &mut canvas, None, t, width, height, || false);
             });
             report(label, stats);
         }

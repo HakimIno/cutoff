@@ -46,6 +46,7 @@ component TrackLane inherits Rectangle {
     callback drag-released(string, length);
     callback trim-released(string, bool, length);
     callback request-split(string);
+    callback detach-audio(string);
     callback reveal-in-finder(string);
     callback move-to-track(string, int);
 
@@ -95,6 +96,7 @@ component TrackLane inherits Rectangle {
         drag-released(id, dx) => { root.drag-released(id, dx); }
         trim-released(id, right, dx) => { root.trim-released(id, right, dx); }
         request-split(id)     => { root.request-split(id); }
+        detach-audio(id)      => { root.detach-audio(id); }
         reveal-in-finder(id)  => { root.reveal-in-finder(id); }
         move-to-track(id, t)  => { root.move-to-track(id, t); }
     }
@@ -145,6 +147,7 @@ export component Timeline inherits Rectangle {
     callback drag-released(string, length);
     callback trim-released(string, bool, length);
     callback request-split(string);
+    callback detach-audio(string);
     callback reveal-in-finder(string);
     callback move-to-track(string, int);
     callback toggle-track-mute(int);
@@ -482,6 +485,7 @@ export component Timeline inherits Rectangle {
                                     drag-released(id, dx) => { root.drag-released(id, dx); }
                                     trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
                                     request-split(id)     => { root.request-split(id); }
+                                    detach-audio(id)      => { root.detach-audio(id); }
                                     reveal-in-finder(id)  => { root.reveal-in-finder(id); }
                                     move-to-track(id, t)  => { root.move-to-track(id, t); }
                                 }

@@ -99,6 +99,65 @@ pub fn ripple_delete(playlist: &mut Playlist, id: ClipId) -> CoreResult<Clip> {
     playlist.remove(id)
 }
 
+/// Absolute start (µs) of the clip at `target_idx` on `track`, honoring
+/// `start_us` pins and packing un-pinned clips after their predecessor — the
+/// same placement `Project::populate_from_playlist` computes.
+fn effective_start_us_on_track(playlist: &Playlist, target_idx: usize, track: u8) -> i64 {
+    let mut cursor: i64 = 0;
+    for (i, clip) in playlist.clips().iter().enumerate() {
+        if clip.video_track != track {
+            continue;
+        }
+        let start = clip.start_us.unwrap_or(cursor);
+        if i == target_idx {
+            return start;
+        }
+        cursor = start + clip.effective_duration_us();
+    }
+    0
+}
+
+/// Detach the audio of the video clip `id` into a separate audio clip on the
+/// paired audio track (V1→A1, V2→A2), pinned at the same timeline position.
+/// The original keeps its video but its embedded audio is silenced
+/// (`audio_detached = true`) so the sound isn't doubled. The two clips can
+/// then be trimmed / dragged independently. Returns the new audio clip's id.
+pub fn detach_audio(playlist: &mut Playlist, id: ClipId) -> CoreResult<ClipId> {
+    let idx = find_index(playlist, id)?;
+    let video_track = playlist.clips()[idx].video_track;
+    // Map a video track to its paired audio track. Only V1/V2 are supported.
+    let audio_track: u8 = match video_track {
+        0 => 2, // V1 → A1
+        1 => 3, // V2 → A2
+        _ => {
+            return Err(CoreError::InvalidTrim(
+                "detach_audio: clip is not on a video track (V1/V2)".into(),
+            ))
+        }
+    };
+    if playlist.clips()[idx].audio_detached {
+        return Err(CoreError::InvalidTrim("audio already detached".into()));
+    }
+
+    let start_us = effective_start_us_on_track(playlist, idx, video_track);
+
+    let audio_clip = {
+        let src = &mut playlist.clips_mut()[idx];
+        src.audio_detached = true;
+        let mut a = src.clone();
+        a.id = uuid::Uuid::new_v4();
+        a.audio_detached = false; // the detached copy is the one that plays
+        a.video_track = audio_track;
+        a.start_us = Some(start_us); // pin to the source clip's position
+        a.origin_id = Some(src.asset_id()); // share waveform/thumbnail assets
+        a.thumbnails = src.thumbnails.clone();
+        a
+    };
+    let new_id = audio_clip.id;
+    playlist.insert(idx + 1, audio_clip)?;
+    Ok(new_id)
+}
+
 fn find_index(playlist: &Playlist, id: ClipId) -> CoreResult<usize> {
     playlist
         .clips()
@@ -205,6 +264,47 @@ mod tests {
         trim(&mut pl, id, TrimSide::Right, 6_000_000).unwrap();
         assert_eq!(pl.clips()[0].effective_duration_us(), 6_000_000);
         assert!(pl.clips()[0].is_trimmed());
+    }
+
+    #[test]
+    fn detach_audio_creates_paired_audio_clip() {
+        let mut pl = Playlist::new();
+        let mut a = clip(10.0);
+        a.video_track = 0; // V1
+        a.start_us = Some(5_000_000); // pinned at 5s
+        pl.push(a);
+        let vid = pl.clips()[0].id;
+
+        let audio_id = detach_audio(&mut pl, vid).unwrap();
+        assert_eq!(pl.len(), 2);
+
+        let video = pl.clips().iter().find(|c| c.id == vid).unwrap();
+        let audio = pl.clips().iter().find(|c| c.id == audio_id).unwrap();
+        assert!(video.audio_detached, "source video is silenced");
+        assert_eq!(video.video_track, 0, "video stays on V1");
+        assert!(!audio.audio_detached, "the detached copy carries the sound");
+        assert_eq!(audio.video_track, 2, "audio copy lands on A1");
+        assert_eq!(audio.start_us, Some(5_000_000), "audio pinned at the same time");
+        assert_eq!(audio.asset_id(), vid, "audio shares the source's waveform asset");
+    }
+
+    #[test]
+    fn detach_audio_twice_is_rejected() {
+        let mut pl = Playlist::new();
+        pl.push(clip(8.0)); // V1 by default
+        let id = pl.clips()[0].id;
+        detach_audio(&mut pl, id).unwrap();
+        assert!(detach_audio(&mut pl, id).is_err(), "already detached");
+    }
+
+    #[test]
+    fn detach_audio_on_audio_track_rejected() {
+        let mut pl = Playlist::new();
+        let mut a = clip(8.0);
+        a.video_track = 2; // already an audio (A1) clip
+        pl.push(a);
+        let id = pl.clips()[0].id;
+        assert!(detach_audio(&mut pl, id).is_err());
     }
 
     #[test]

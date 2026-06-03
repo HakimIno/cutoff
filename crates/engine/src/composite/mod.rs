@@ -202,6 +202,11 @@ pub fn active_clips_at(
         if track.muted {
             continue;
         }
+        // Video compositing only: audio-track clips (e.g. detached audio) must
+        // not be rendered as pictures.
+        if !matches!(track.kind, TrackKind::Video) {
+            continue;
+        }
         for tc in &track.clips {
             if t_us >= tc.start_us && t_us < tc.end_us() {
                 result.push((track_idx, tc));
