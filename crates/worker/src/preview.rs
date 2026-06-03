@@ -1207,6 +1207,11 @@ fn render_timeline_frame(
 
             let center_x = width as f32 / 2.0 + xf.position_x as f32 * preview_scale;
             let center_y = height as f32 / 2.0 + xf.position_y as f32 * preview_scale;
+            // Auto-fit: at user-scale 1.0 a clip fills the project frame
+            // (contain, aspect-preserved) regardless of its native resolution,
+            // like CapCut. A clip whose resolution matches the frame gets fit==1.
+            let fit = (width as f32 / (frame.width as f32).max(1.0))
+                .min(height as f32 / (frame.height as f32).max(1.0));
 
             gpu_inputs.push(video_merger_engine::composite::gpu::GpuClipInput {
                 rgba: &frame.rgba,
@@ -1216,8 +1221,8 @@ fn render_timeline_frame(
                 crop_t,
                 crop_r,
                 crop_b,
-                scale_x: xf.scale_x,
-                scale_y: xf.scale_y,
+                scale_x: xf.scale_x * fit,
+                scale_y: xf.scale_y * fit,
                 rotation_deg: xf.rotation_deg,
                 flip_h: xf.flip_h,
                 flip_v: xf.flip_v,
@@ -1261,12 +1266,16 @@ fn render_timeline_frame(
 
         let center_x = width as f32 / 2.0 + xf.position_x as f32 * preview_scale;
         let center_y = height as f32 / 2.0 + xf.position_y as f32 * preview_scale;
+        // Auto-fit (contain) so scale 1.0 fills the frame regardless of the
+        // clip's native resolution — matches the GPU path above.
+        let fit = (width as f32 / (frame.width as f32).max(1.0))
+            .min(height as f32 / (frame.height as f32).max(1.0));
 
         composite_affine(
             canvas.as_mut_slice(), width as usize, height as usize,
             &frame.rgba, frame.width as usize, frame.height as usize,
             crop_l, crop_t, crop_r, crop_b,
-            xf.scale_x, xf.scale_y, xf.rotation_deg, xf.flip_h, xf.flip_v,
+            xf.scale_x * fit, xf.scale_y * fit, xf.rotation_deg, xf.flip_h, xf.flip_v,
             xf.opacity, center_x, center_y,
         );
     }

@@ -42,8 +42,8 @@ component TrackLane inherits Rectangle {
     callback clip-clicked(string);
     callback remove-clicked(string);
     callback drag-started(string);
-    callback drag-moved(string, length);
-    callback drag-released(string, length);
+    callback drag-moved(string, length, length);
+    callback drag-released(string, length, length);
     callback trim-released(string, bool, length);
     callback request-split(string);
     callback detach-audio(string);
@@ -71,16 +71,12 @@ component TrackLane inherits Rectangle {
     // `sync_tracks`; multiplying by `px-per-sec` aligns each card with the
     // ruler ticks and gridlines (which share the same origin).
     for clip[idx] in root.clips: ClipBlock {
-        // While this card is the one being dragged, follow the snapped target
-        // position (computed in Rust) so it glides between valid spots like a
-        // magnetic drag overlay. Otherwise sit at the clip's real start.
-        x: (root.drag-from-id == clip.id && root.drop-target-index >= 0)
-            ? root.drop-indicator-x
-            : clip.start-secs * root.px-per-sec;
+        // Cards sit at their real timeline position. The dragged card stays put
+        // as a dim placeholder; a floating ghost (rendered at the timeline
+        // level) follows the cursor instead.
+        x: clip.start-secs * root.px-per-sec;
         y: 4px;
-        // Only the dragged card glides; others snap instantly so they don't
-        // lag the ruler while zooming.
-        animate x { duration: root.drag-from-id == clip.id ? 70ms : 0ms; easing: ease-out; }
+        animate x { duration: 70ms; easing: ease-out; }
         data: clip;
         index: idx;
         px-per-sec: root.px-per-sec;
@@ -92,8 +88,8 @@ component TrackLane inherits Rectangle {
         clip-clicked(id)      => { root.clip-clicked(id); }
         remove-clicked(id)    => { root.remove-clicked(id); }
         drag-started(id)      => { root.drag-started(id); }
-        drag-moved(id, dx)    => { root.drag-moved(id, dx); }
-        drag-released(id, dx) => { root.drag-released(id, dx); }
+        drag-moved(id, dx, dy)    => { root.drag-moved(id, dx, dy); }
+        drag-released(id, dx, dy) => { root.drag-released(id, dx, dy); }
         trim-released(id, right, dx) => { root.trim-released(id, right, dx); }
         request-split(id)     => { root.request-split(id); }
         detach-audio(id)      => { root.detach-audio(id); }
@@ -138,13 +134,20 @@ export component Timeline inherits Rectangle {
     in property <string> drag-from-id;
     in property <int> drop-target-index: -1;
     in property <length> drop-indicator-x: 0px;
+    // Floating drag-ghost (follows the cursor) + snapped drop-zone geometry,
+    // all in lane-content coordinates. Pushed from Rust during a drag.
+    in property <length> drop-zone-y: 0px;
+    in property <length> drag-ghost-x: 0px;
+    in property <length> drag-ghost-y: 0px;
+    in property <length> drag-ghost-w: 0px;
+    in property <bool> drag-ghost-audio: false;
 
     callback clip-clicked(string);
     callback remove-clicked(string);
     callback seek-fraction(float);
     callback drag-started(string);
-    callback drag-moved(string, length);
-    callback drag-released(string, length);
+    callback drag-moved(string, length, length);
+    callback drag-released(string, length, length);
     callback trim-released(string, bool, length);
     callback request-split(string);
     callback detach-audio(string);
@@ -481,8 +484,8 @@ export component Timeline inherits Rectangle {
                                     clip-clicked(id)      => { root.clip-clicked(id); }
                                     remove-clicked(id)    => { root.remove-clicked(id); }
                                     drag-started(id)      => { root.drag-started(id); }
-                                    drag-moved(id, dx)    => { root.drag-moved(id, dx); }
-                                    drag-released(id, dx) => { root.drag-released(id, dx); }
+                                    drag-moved(id, dx, dy)    => { root.drag-moved(id, dx, dy); }
+                                    drag-released(id, dx, dy) => { root.drag-released(id, dx, dy); }
                                     trim-released(id, r, dx) => { root.trim-released(id, r, dx); }
                                     request-split(id)     => { root.request-split(id); }
                                     detach-audio(id)      => { root.detach-audio(id); }
@@ -490,11 +493,31 @@ export component Timeline inherits Rectangle {
                                     move-to-track(id, t)  => { root.move-to-track(id, t); }
                                 }
 
-                                // Drop indicator spans all lanes vertically.
-                                if root.drop-target-index >= 0 : DropIndicator {
+                                // Glowing drop-zone: where the dragged clip will
+                                // actually land (snapped) on the destination track.
+                                if root.drop-target-index >= 0 : Rectangle {
                                     x: root.drop-indicator-x;
-                                    y: root.ruler-offset;
-                                    height: root.tracks.length * (root.lane-height + root.lane-gap) - root.lane-gap;
+                                    y: root.drop-zone-y;
+                                    width: max(root.drag-ghost-w, 4px);
+                                    height: root.lane-height;
+                                    border-radius: 4px;
+                                    border-width: 2px;
+                                    border-color: Palette.accent-2;
+                                    background: Palette.accent.with-alpha(0.16);
+                                }
+
+                                // Floating ghost of the dragged clip — follows the
+                                // cursor across lanes so the drag reads as "picked up".
+                                if root.drop-target-index >= 0 : Rectangle {
+                                    x: root.drag-ghost-x;
+                                    y: root.drag-ghost-y;
+                                    width: max(root.drag-ghost-w, 4px);
+                                    height: root.lane-height - 8px;
+                                    border-radius: 4px;
+                                    border-width: 1px;
+                                    border-color: #ffffff;
+                                    background: (root.drag-ghost-audio ? Palette.success : Palette.accent).with-alpha(0.55);
+                                    opacity: 0.9;
                                 }
 
                                 // Playhead spans the lane stack vertically.

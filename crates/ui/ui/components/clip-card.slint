@@ -48,8 +48,8 @@ export component ClipBlock inherits Rectangle {
     callback clip-clicked(string);
     callback remove-clicked(string);
     callback drag-started(string);
-    callback drag-moved(string, length);
-    callback drag-released(string, length);
+    callback drag-moved(string, length, length);     // (id, dx, dy)
+    callback drag-released(string, length, length);   // (id, dx, dy)
     callback trim-released(string, bool, length);  // (id, is_right_handle, delta_px)
     callback request-split(string);
     callback detach-audio(string);
@@ -67,21 +67,20 @@ export component ClipBlock inherits Rectangle {
     width: max(self.px-per-sec * root.data.duration-secs, 44px);
     height: 56px;
     border-radius: 4px;
-    // The card being dragged is lifted (bright 2px ring) rather than dimmed,
-    // so it reads as a floating overlay following the cursor.
-    border-width: root.selected || root.drag-ghost ? 2px : 1px;
-    border-color: root.drag-ghost
-        ? #ffffff
-        : (root.is-audio
-            ? (root.selected ? #ffffff : (drag-area.has-hover ? #ffffffee : #ffffffcc))
-            : (root.selected
-                ? root.accent-color.brighter(0.55)
-                : (drag-area.has-hover ? root.accent-color.with-alpha(0.7) : root.accent-color.with-alpha(0.45))));
+    border-width: root.selected ? 2px : 1px;
+    border-color: root.is-audio
+        ? (root.selected ? #ffffff : (drag-area.has-hover ? #ffffffee : #ffffffcc))
+        : (root.selected
+            ? root.accent-color.brighter(0.55)
+            : (drag-area.has-hover ? root.accent-color.with-alpha(0.7) : root.accent-color.with-alpha(0.45)));
     background: root.is-audio
         ? (drag-area.has-hover ? #48a85e : #52b86a)
         : (drag-area.has-hover ? #20242d : #171920);
     clip: true;
-    opacity: root.data.muted ? 0.6 : 1.0;
+    // While this card is being dragged it becomes a dim placeholder in its
+    // original slot; the floating ghost (rendered at the timeline level) is the
+    // thing that follows the cursor.
+    opacity: root.drag-ghost ? 0.32 : (root.data.muted ? 0.6 : 1.0);
     animate background { duration: 120ms; }
     animate border-color { duration: 120ms; }
     animate opacity { duration: 120ms; }
@@ -106,12 +105,12 @@ export component ClipBlock inherits Rectangle {
                 root.drag-started(root.data.id);
             }
             if (self.dragging) {
-                root.drag-moved(root.data.id, self.mouse-x - self.pressed-x);
+                root.drag-moved(root.data.id, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y);
             }
         }
         pointer-event(e) => {
             if (e.kind == PointerEventKind.up && self.dragging) {
-                root.drag-released(root.data.id, self.mouse-x - self.pressed-x);
+                root.drag-released(root.data.id, self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y);
                 self.dragging = false;
             }
         }

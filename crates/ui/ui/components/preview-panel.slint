@@ -127,11 +127,22 @@ export component PreviewPanel inherits Rectangle {
             property <float> eff-sx: root.selected-scale * root.selected-scale-x;
             property <float> eff-sy: root.selected-scale * root.selected-scale-y;
 
-            property <length> clip-w: root.selected-width * eff-sx * 1px * scale-factor;
-            property <length> clip-h: root.selected-height * eff-sy * 1px * scale-factor;
+            // Auto-fit (contain): at scale 1.0 the clip fills the frame regardless
+            // of its native resolution. Must match the compositor's `fit` so the
+            // selection box lands exactly on the rendered video.
+            property <float> fit-factor: min(
+                root.project-width / max(root.selected-width, 1),
+                root.project-height / max(root.selected-height, 1));
 
-            property <length> clip-x: disp-x + (root.selected-position-x * 1px + (nw - root.selected-width * eff-sx * 1px) / 2) * scale-factor;
-            property <length> clip-y: disp-y + (root.selected-position-y * 1px + (nh - root.selected-height * eff-sy * 1px) / 2) * scale-factor;
+            // The clip's on-frame size in project pixels (native × fit × scale).
+            property <length> clip-pw: root.selected-width * fit-factor * eff-sx * 1px;
+            property <length> clip-ph: root.selected-height * fit-factor * eff-sy * 1px;
+
+            property <length> clip-w: clip-pw * scale-factor;
+            property <length> clip-h: clip-ph * scale-factor;
+
+            property <length> clip-x: disp-x + (root.selected-position-x * 1px + (nw - clip-pw) / 2) * scale-factor;
+            property <length> clip-y: disp-y + (root.selected-position-y * 1px + (nh - clip-ph) / 2) * scale-factor;
 
             // Live frame (visible only when selection has produced a frame)
             img := Image {
@@ -387,20 +398,21 @@ export component PreviewPanel inherits Rectangle {
                             alignment: center;
                             spacing: Theme.spacing-sm;
 
-                            Rectangle {
-                                width: 56px;
-                                height: 56px;
-                                horizontal-stretch: 0;
-                                border-radius: 28px;
-                                background: Palette.surface-2;
-                                PlayIcon {
-                                    icon-color: Palette.text-dim;
-                                    width: 22px;
-                                    height: 22px;
-                                    x: (parent.width - self.width) / 2 + 1px;
-                                    y: (parent.height - self.height) / 2;
-                                }
-                            }
+                            // Rectangle {
+                            //     width: 56px;
+                            //     height: 56px;
+                            //     horizontal-stretch: 0;
+                            //     border-radius: 28px;
+                            //     background: Palette.surface-2;
+                            //     x: 12px;
+                            //     PlayIcon {
+                            //         icon-color: Palette.text-dim;
+                            //         width: 22px;
+                            //         height: 22px;
+                            //         x: (parent.width - self.width) / 2 + 1px;
+                            //         y: (parent.height - self.height) / 2;
+                            //     }
+                            // }
                             Text {
                                 text: "Select a clip to preview";
                                 color: Palette.text-dim;

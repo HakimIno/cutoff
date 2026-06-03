@@ -26,22 +26,24 @@ export component MediaLibraryCard inherits Rectangle {
             background: black;
             clip: true;
 
-            for thumb[i] in root.data.thumbnails: Image {
-                source: thumb;
+            if root.data.thumbnails.length > 0 : Image {
+                source: root.data.thumbnails[0];
                 width: 100%;
                 height: 100%;
                 image-fit: cover;
             }
 
-            // "VIDEO" badge top left
-            Rectangle {
-                x: 8px; y: 8px;
-                Text {
-                    text: "VIDEO";
-                    color: white;
-                    font-size: 10px;
-                    font-weight: 700;
-                    letter-spacing: 0.5px;
+            if root.data.thumbnails.length == 0 : VerticalLayout {
+                alignment: center;
+                HorizontalLayout {
+                    alignment: center;
+                    Text {
+                        text: "VIDEO";
+                        color: Palette.text-muted;
+                        font-size: 14px;
+                        font-weight: 700;
+                        letter-spacing: 2px;
+                    }
                 }
             }
         }

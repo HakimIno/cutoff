@@ -51,9 +51,10 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let pv = state.preview.clone();
+        let proj = state.project.clone();
         let zoom = state.zoom.clone();
-        window.on_drag_moved(move |id, dx| {
-            on_drag_moved(weak.clone(), pl.clone(), pv.clone(), zoom.clone(), id, dx)
+        window.on_drag_moved(move |id, dx, dy| {
+            on_drag_moved(weak.clone(), pl.clone(), pv.clone(), proj.clone(), zoom.clone(), id, dx, dy)
         });
     }
     {
@@ -65,7 +66,7 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         let undo = state.undo.clone();
         let tracks = state.tracks.clone();
         let proj = state.project.clone();
-        window.on_drag_released(move |id, dx| {
+        window.on_drag_released(move |id, dx, dy| {
             on_drag_released(
                 weak.clone(),
                 tx.clone(),
@@ -77,6 +78,7 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
                 undo.clone(),
                 id,
                 dx,
+                dy,
             )
         });
     }
@@ -713,28 +715,84 @@ fn on_drag_started(weak: Weak<AppWindow>, id: SharedString) {
     }
 }
 
+/// Translate a vertical drag (`dy_px`) into a destination `video_track` value,
+/// constrained to tracks of the same kind as the clip's current track (video
+/// clips stay among video lanes, audio among audio). Returns the clip's current
+/// track when the drag stays in-row or would cross kinds.
+fn resolve_drag_track(project: &video_merger_core::domain::Project, clip_track: u8, dy_px: f32) -> u8 {
+    let cur_idx = project.track_index_for_video_track_value(clip_track);
+    let row_delta = (dy_px / timeline_view::LANE_ROW_PX).round() as i32;
+    if row_delta == 0 || project.tracks.is_empty() {
+        return clip_track;
+    }
+    let n = project.tracks.len() as i32;
+    let target_idx = (cur_idx as i32 + row_delta).clamp(0, n - 1) as usize;
+    if project.tracks.get(target_idx).map(|t| t.kind) != project.tracks.get(cur_idx).map(|t| t.kind) {
+        return clip_track;
+    }
+    project.video_track_value_for_index(target_idx)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn on_drag_moved(
     weak: Weak<AppWindow>,
     playlist: SharedPlaylist,
     preview: SharedPreview,
+    project: super::SharedProject,
     zoom: SharedZoom,
     id: SharedString,
     delta_px: f32,
+    delta_y_px: f32,
 ) {
+    use video_merger_core::domain::TrackKind;
     let Ok(uuid) = Uuid::parse_str(id.as_str()) else {
         return;
     };
     let z = *zoom.lock().expect("zoom mutex poisoned");
     let playhead = preview.lock().map(|p| p.playhead_us).unwrap_or(0);
     let pl = playlist.lock().expect("playlist mutex poisoned");
-    let Some(out) = timeline_view::drag_to_start_us(&pl, z, uuid, delta_px, playhead) else {
+    let proj = project.lock().expect("project mutex poisoned");
+
+    let Some((clip_track, dur_us)) = pl
+        .clips()
+        .iter()
+        .find(|c| c.id == uuid)
+        .map(|c| (c.video_track, c.effective_duration_us()))
+    else {
         return;
     };
+    let Some(cur_start) = timeline_view::effective_start_us(&pl, uuid) else {
+        return;
+    };
+    let dest_track = resolve_drag_track(&proj, clip_track, delta_y_px);
+    let Some(out) = timeline_view::drag_to_start_us(&pl, z, uuid, delta_px, playhead, dest_track) else {
+        return;
+    };
+
+    // Geometry for the floating ghost (follows the cursor) and the snapped
+    // drop-zone outline (where it will actually land).
+    let cur_row = proj.track_index_for_video_track_value(clip_track);
+    let dest_row = proj.track_index_for_video_track_value(dest_track);
+    let is_audio = matches!(proj.tracks.get(cur_row).map(|t| t.kind), Some(TrackKind::Audio));
+
+    let cur_x = cur_start as f32 / 1_000_000.0 * z;
+    let width = (dur_us as f32 / 1_000_000.0 * z).max(44.0);
+    let ghost_x = cur_x + delta_px;
+    let ghost_y = timeline_view::RULER_OFFSET_PX
+        + cur_row as f32 * timeline_view::LANE_ROW_PX
+        + timeline_view::CARD_Y_PX
+        + delta_y_px;
+    let drop_zone_y =
+        timeline_view::RULER_OFFSET_PX + dest_row as f32 * timeline_view::LANE_ROW_PX;
+
     if let Some(window) = weak.upgrade() {
-        // Any non-negative value makes the drop indicator visible; the exact
-        // index no longer matters in the absolute model.
         window.set_drop_target_index(0);
         window.set_drop_indicator_x(out.indicator_x_px);
+        window.set_drop_zone_y(drop_zone_y);
+        window.set_drag_ghost_x(ghost_x);
+        window.set_drag_ghost_y(ghost_y);
+        window.set_drag_ghost_w(width);
+        window.set_drag_ghost_audio(is_audio);
     }
 }
 
@@ -750,6 +808,7 @@ fn on_drag_released(
     undo: SharedUndo,
     id: SharedString,
     delta_px: f32,
+    delta_y_px: f32,
 ) {
     let Some(window) = weak.upgrade() else { return };
     window.set_drag_from_id(SharedString::from(DRAG_ID_NONE));
@@ -761,22 +820,32 @@ fn on_drag_released(
     let z = *zoom.lock().expect("zoom mutex poisoned");
     let playhead = preview.lock().map(|p| p.playhead_us).unwrap_or(0);
 
-    // Resolve the snapped target, then bail if nothing actually moved.
-    let new_start = {
+    // Destination track (from the vertical drag) + snapped start; bail if
+    // nothing actually moved.
+    let resolved = {
         let pl = playlist.lock().expect("playlist mutex poisoned");
-        let Some(out) = timeline_view::drag_to_start_us(&pl, z, uuid, delta_px, playhead) else {
+        let proj = project.lock().expect("project mutex poisoned");
+        let Some(cur_track) = pl.clips().iter().find(|c| c.id == uuid).map(|c| c.video_track) else {
             return;
         };
-        if timeline_view::effective_start_us(&pl, uuid) == Some(out.new_start_us) {
+        let dest_track = resolve_drag_track(&proj, cur_track, delta_y_px);
+        let Some(out) = timeline_view::drag_to_start_us(&pl, z, uuid, delta_px, playhead, dest_track) else {
+            return;
+        };
+        let unchanged = dest_track == cur_track
+            && timeline_view::effective_start_us(&pl, uuid) == Some(out.new_start_us);
+        if unchanged {
             return;
         }
-        out.new_start_us
+        (dest_track, out.new_start_us)
     };
+    let (dest_track, new_start) = resolved;
 
     {
         let mut pl = playlist.lock().expect("playlist mutex poisoned");
         checkpoint(&undo, &pl);
         if let Some(clip) = pl.clips_mut().iter_mut().find(|c| c.id == uuid) {
+            clip.video_track = dest_track;
             clip.start_us = Some(new_start);
         }
     }

@@ -104,6 +104,12 @@ export component AppWindow inherits Window {
     in property <string> drag-from-id;
     in property <int> drop-target-index: -1;
     in property <length> drop-indicator-x: 0px;
+    // Floating drag-ghost + snapped drop-zone geometry (set from Rust during a drag).
+    in property <length> drop-zone-y: 0px;
+    in property <length> drag-ghost-x: 0px;
+    in property <length> drag-ghost-y: 0px;
+    in property <length> drag-ghost-w: 0px;
+    in property <bool> drag-ghost-audio: false;
 
     // Toast + FPS readout
     in property <string> toast-message;
@@ -124,8 +130,8 @@ export component AppWindow inherits Window {
     callback jump-start();
     callback jump-end();
     callback drag-started(string);
-    callback drag-moved(string, length);
-    callback drag-released(string, length);
+    callback drag-moved(string, length, length);
+    callback drag-released(string, length, length);
     callback trim-released(string, bool, length);
     callback split();
     callback ripple-delete();
@@ -350,12 +356,17 @@ export component AppWindow inherits Window {
                             drag-from-id: root.drag-from-id;
                             drop-target-index: root.drop-target-index;
                             drop-indicator-x: root.drop-indicator-x;
+                            drop-zone-y: root.drop-zone-y;
+                            drag-ghost-x: root.drag-ghost-x;
+                            drag-ghost-y: root.drag-ghost-y;
+                            drag-ghost-w: root.drag-ghost-w;
+                            drag-ghost-audio: root.drag-ghost-audio;
                             clip-clicked(id) => { root.clip-selected(id); }
                             remove-clicked(id) => { root.remove-clicked(id); }
                             seek-fraction(f) => { root.seek-fraction(f); }
                             drag-started(id) => { root.drag-started(id); }
-                            drag-moved(id, dx) => { root.drag-moved(id, dx); }
-                            drag-released(id, dx) => { root.drag-released(id, dx); }
+                            drag-moved(id, dx, dy) => { root.drag-moved(id, dx, dy); }
+                            drag-released(id, dx, dy) => { root.drag-released(id, dx, dy); }
                             trim-released(id, right, dx) => { root.trim-released(id, right, dx); }
                             request-split(id) => {
                                 // Split at the current playhead — do NOT reselect

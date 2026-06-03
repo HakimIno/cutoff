@@ -91,7 +91,7 @@ export component Sidebar inherits Rectangle {
 
     VerticalLayout {
         spacing: 0px;
-        alignment: start;
+        // Removed alignment: start; so vertical-stretch can push the footer down
 
         // Top Navigation Tabs
         Rectangle {
@@ -122,6 +122,8 @@ export component Sidebar inherits Rectangle {
 
         // TAB 0: Assets View
         if root.active-tab == 0 : VerticalLayout {
+            vertical-stretch: 1;
+
             // Filter Sub Tabs
             Rectangle {
                 height: 48px;
@@ -158,27 +160,23 @@ export component Sidebar inherits Rectangle {
                 }
             }
 
-            // Scrollable loaded clips
+            // Scrollable loaded clips (2-Column Grid)
             Rectangle {
                 vertical-stretch: 1;
                 background: Palette.surface-2;
 
-                VerticalLayout {
-                    padding-left: 12px;
-                    padding-right: 12px;
-                    padding-bottom: 12px;
-
-                    ScrollView {
-                        viewport-height: root.clips.length * 168px;
-                        VerticalLayout {
-                            spacing: 12px;
-                            alignment: start;
-                            for clip[idx] in root.clips: MediaLibraryCard {
-                                data: clip;
-                                clicked => { root.clip-selected(clip.id); }
-                                remove => { root.remove-clicked(clip.id); }
-                            }
-                        }
+                ScrollView {
+                    viewport-height: Math.floor((root.clips.length + 1) / 2) * 168px + 12px;
+                    viewport-width: parent.width;
+                    
+                    for clip[idx] in root.clips: MediaLibraryCard {
+                        width: (parent.width - 36px) / 2;
+                        x: 12px + (idx - Math.floor(idx / 2) * 2) * ((parent.width - 36px) / 2 + 12px);
+                        y: 12px + Math.floor(idx / 2) * 168px;
+                        
+                        data: clip;
+                        clicked => { root.clip-selected(clip.id); }
+                        remove => { root.remove-clicked(clip.id); }
                     }
                 }
             }

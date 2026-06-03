@@ -105,6 +105,16 @@ pub fn total_duration_secs(playlist: &Playlist) -> f32 {
 /// helps butt clips together without fighting precise placement.
 pub const SNAP_PX: f32 = 8.0;
 
+// Lane geometry — keep in sync with `timeline.slint` (`lane-height`,
+// `lane-gap`, `ruler-offset`, and the card's `y: 4px`). Used to map a vertical
+// drag into track rows and to place the floating drag ghost / drop-zone.
+pub const LANE_HEIGHT_PX: f32 = 64.0;
+pub const LANE_GAP_PX: f32 = 4.0;
+pub const RULER_OFFSET_PX: f32 = 4.0;
+pub const CARD_Y_PX: f32 = 4.0;
+/// Vertical pitch of one stacked lane row (lane + gap).
+pub const LANE_ROW_PX: f32 = LANE_HEIGHT_PX + LANE_GAP_PX;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct DragOutcome {
     /// Snapped absolute start position for the dragged clip (µs, ≥ 0).
@@ -126,12 +136,12 @@ pub fn drag_to_start_us(
     clip_id: Uuid,
     delta_px: f32,
     playhead_us: i64,
+    target_track: u8,
 ) -> Option<DragOutcome> {
     if px_per_sec <= 0.0 {
         return None;
     }
     let target = playlist.clips().iter().find(|c| c.id == clip_id)?;
-    let track = target.video_track;
     let dur = target.effective_duration_us();
     let cur_start = effective_start_us(playlist, clip_id)?;
 
@@ -139,11 +149,11 @@ pub fn drag_to_start_us(
     let raw = (((cur_start as f32) + delta_px * us_per_px).round() as i64).max(0);
     let snap_us = (SNAP_PX * us_per_px) as i64;
 
-    // Snap candidates: project origin, the playhead, and every other same-track
-    // clip's start & end edge.
+    // Snap candidates: project origin, the playhead, and every clip edge on the
+    // destination track (excluding the dragged clip itself).
     let mut candidates = vec![0i64, playhead_us];
     let mut cursor: i64 = 0;
-    for clip in playlist.clips().iter().filter(|c| c.video_track == track) {
+    for clip in playlist.clips().iter().filter(|c| c.video_track == target_track) {
         let start = clip.start_us.unwrap_or(cursor);
         let end = start + clip.effective_duration_us();
         if clip.id != clip_id {
@@ -296,7 +306,7 @@ mod tests {
     #[test]
     fn drag_unknown_clip_returns_none() {
         let (pl, _) = build(&[(0, 10.0)]);
-        assert!(drag_to_start_us(&pl, 6.0, Uuid::nil(), 100.0, 0).is_none());
+        assert!(drag_to_start_us(&pl, 6.0, Uuid::nil(), 100.0, 0, 0).is_none());
     }
 
     #[test]
@@ -305,7 +315,7 @@ mod tests {
         // (no neighbours; playhead far away) → +30s.
         let (mut pl, ids) = build(&[(0, 5.0)]);
         pl.clips_mut()[0].video_track = 0;
-        let out = drag_to_start_us(&pl, 10.0, ids[0], 300.0, 999_000_000).unwrap();
+        let out = drag_to_start_us(&pl, 10.0, ids[0], 300.0, 999_000_000, 0).unwrap();
         assert_eq!(out.new_start_us, 30_000_000);
         // Indicator x = 30s * 10 px/s = 300 px.
         assert!((out.indicator_x_px - 300.0).abs() < 0.5);
@@ -315,7 +325,7 @@ mod tests {
     fn drag_clamps_at_origin() {
         let (pl, ids) = build(&[(0, 5.0)]);
         // Drag far left → cannot go below 0.
-        let out = drag_to_start_us(&pl, 10.0, ids[0], -9999.0, -1).unwrap();
+        let out = drag_to_start_us(&pl, 10.0, ids[0], -9999.0, -1, 0).unwrap();
         assert_eq!(out.new_start_us, 0);
     }
 
@@ -331,7 +341,7 @@ mod tests {
         let (pl, ids) = build(&[(0, 10.0), (0, 10.0)]);
         // Drag B left by 5 px (0.5s) from its packed 10s start → raw 9.5s,
         // within SNAP_PX(8px=0.8s) of A's end (10s) → leading edge snaps to 10s.
-        let out = drag_to_start_us(&pl, 10.0, ids[1], -5.0, -1).unwrap();
+        let out = drag_to_start_us(&pl, 10.0, ids[1], -5.0, -1, 0).unwrap();
         assert_eq!(out.new_start_us, 10_000_000, "snaps flush against A's right edge");
     }
 
@@ -364,7 +374,7 @@ mod tests {
         let (pl, ids) = build(&[(0, 5.0)]);
         // Playhead at 50s. Drag clip so raw lands ~near 50s (498 px = 49.8s at
         // 10 px/s), within snap → leading edge snaps to playhead 50s.
-        let out = drag_to_start_us(&pl, 10.0, ids[0], 498.0, 50_000_000).unwrap();
+        let out = drag_to_start_us(&pl, 10.0, ids[0], 498.0, 50_000_000, 0).unwrap();
         assert_eq!(out.new_start_us, 50_000_000);
     }
 }
