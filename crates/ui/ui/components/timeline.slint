@@ -180,10 +180,10 @@ export component Timeline inherits Rectangle {
     VerticalLayout {
         padding: Theme.spacing-md;
         spacing: Theme.spacing-sm;
-        alignment: start;
 
         HorizontalLayout {
             spacing: Theme.spacing-sm;
+            vertical-stretch: 0;
             Text {
                 text: "Timeline";
                 color: Palette.text;
@@ -261,8 +261,8 @@ export component Timeline inherits Rectangle {
         }
 
         Rectangle {
-            // Fixed visible height; lanes scroll vertically when tracks overflow.
-            height: 276px;
+            // Fill the available timeline area; lanes scroll vertically when tracks overflow.
+            vertical-stretch: 1;
             border-radius: Theme.radius-sm;
             background: #101115;
             border-width: 1px;

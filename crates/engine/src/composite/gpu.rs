@@ -21,6 +21,7 @@ pub struct GpuClipInput<'a> {
     pub brightness: f32,
     pub contrast: f32,
     pub saturation: f32,
+    pub color_grading: video_merger_core::domain::ColorGrading,
 }
 
 #[repr(C)]
@@ -45,7 +46,18 @@ struct ClipUniforms {
     brightness: f32,
     contrast: f32,
     saturation: f32,
-    _padding: f32,
+    lift_r: f32,
+    lift_g: f32,
+    lift_b: f32,
+    gamma_r: f32,
+    gamma_g: f32,
+    gamma_b: f32,
+    gain_r: f32,
+    gain_g: f32,
+    gain_b: f32,
+    temperature: f32,
+    tint: f32,
+    vignette: f32,
 }
 
 impl ClipUniforms {
@@ -367,7 +379,18 @@ impl WgpuCompositor {
                 brightness: clip.brightness,
                 contrast: clip.contrast,
                 saturation: clip.saturation,
-                _padding: 0.0,
+                lift_r: clip.color_grading.lift_r,
+                lift_g: clip.color_grading.lift_g,
+                lift_b: clip.color_grading.lift_b,
+                gamma_r: clip.color_grading.gamma_r,
+                gamma_g: clip.color_grading.gamma_g,
+                gamma_b: clip.color_grading.gamma_b,
+                gain_r: clip.color_grading.gain_r,
+                gain_g: clip.color_grading.gain_g,
+                gain_b: clip.color_grading.gain_b,
+                temperature: clip.color_grading.temperature,
+                tint: clip.color_grading.tint,
+                vignette: clip.color_grading.vignette,
             };
 
             let uniforms_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

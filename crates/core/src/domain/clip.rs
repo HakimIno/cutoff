@@ -4,7 +4,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use super::codec::CodecProfile;
-use super::transform::{Crop, ResolvedTransform, TransformKeys};
+use super::transform::{ColorGrading, Crop, ResolvedTransform, TransformKeys};
 
 pub type ClipId = Uuid;
 
@@ -79,6 +79,9 @@ pub struct Clip {
     /// Saturation correction (0.0 to 2.0, default 1.0)
     #[serde(default = "default_contrast_saturation")]
     pub saturation: f32,
+    /// Color grading parameters (Lift, Gamma, Gain, Temp, Tint, Vignette)
+    #[serde(default)]
+    pub color_grading: ColorGrading,
 }
 
 fn default_brightness() -> f32 {
@@ -129,6 +132,7 @@ impl Clip {
             brightness: 0.0,
             contrast: 1.0,
             saturation: 1.0,
+            color_grading: ColorGrading::default(),
         }
     }
 
@@ -153,6 +157,7 @@ impl Clip {
             brightness: self.brightness,
             contrast: self.contrast,
             saturation: self.saturation,
+            color_grading: self.color_grading,
         }
     }
 

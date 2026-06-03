@@ -1,6 +1,7 @@
 import { Palette } from "../styles/palette.slint";
 import { Theme } from "../styles/theme.slint";
 import { ParamSlider } from "param-slider.slint";
+import { ScrollView } from "std-widgets.slint";
 
 // Read-only metadata row (label left, value right).
 component InfoRow inherits Rectangle {
@@ -59,7 +60,7 @@ component NumberField inherits Rectangle {
             text: root.label;
             color: Palette.text-muted;
             font-size: Theme.font-sm;
-            width: 66px;
+            width: 72px;
             vertical-alignment: center;
         }
 
@@ -152,7 +153,7 @@ component Switch inherits Rectangle {
             text: root.label;
             color: Palette.text-muted;
             font-size: Theme.font-sm;
-            width: 66px;
+            width: 72px;
             vertical-alignment: center;
         }
         Rectangle { horizontal-stretch: 1; }
@@ -320,6 +321,18 @@ export component DetailsPanel inherits Rectangle {
     in property <float> selected-saturation: 1.0;
     in property <string> selected-opacity-interp: "linear";
     in property <string> selected-rotation-interp: "linear";
+    in property <float> selected-lift-r: 0.0;
+    in property <float> selected-lift-g: 0.0;
+    in property <float> selected-lift-b: 0.0;
+    in property <float> selected-gamma-r: 1.0;
+    in property <float> selected-gamma-g: 1.0;
+    in property <float> selected-gamma-b: 1.0;
+    in property <float> selected-gain-r: 1.0;
+    in property <float> selected-gain-g: 1.0;
+    in property <float> selected-gain-b: 1.0;
+    in property <float> selected-temperature: 0.0;
+    in property <float> selected-tint: 0.0;
+    in property <float> selected-vignette: 0.0;
 
     // Keyframe state per animatable channel (animated = has any key, key = key at playhead).
     in property <bool> selected-opacity-animated;
@@ -347,6 +360,7 @@ export component DetailsPanel inherits Rectangle {
     callback brightness-changed(float);
     callback contrast-changed(float);
     callback saturation-changed(float);
+    callback color-grading-changed(string, float);
     callback keyframe-interp-changed(int, string);
     // Fired once at the start of a scrub/drag so the bridge can checkpoint undo.
     callback transform-gesture-begin();
@@ -365,7 +379,14 @@ export component DetailsPanel inherits Rectangle {
         background: Palette.border;
     }
 
-    VerticalLayout {
+    ScrollView {
+        x: 1px;
+        width: parent.width - 1px;
+        height: 100%;
+        viewport-width: self.visible-width;
+        viewport-height: col.preferred-height;
+
+        col := VerticalLayout {
         padding: Theme.spacing-lg;
         spacing: Theme.spacing-md;
         alignment: start;
@@ -607,6 +628,172 @@ export component DetailsPanel inherits Rectangle {
                     pressed => { root.transform-gesture-begin(); }
                     changed(v) => { root.saturation-changed(v); }
                 }
+
+                // --- Advanced Color Grading ---
+                Rectangle { height: 1px; background: Palette.border; }
+
+                Text {
+                    text: "WHITE BALANCE";
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Palette.text-muted;
+                }
+                ParamSlider {
+                    label: "  Temperature";
+                    value: root.selected-temperature;
+                    minimum: -1.0;
+                    maximum: 1.0;
+                    fill-origin: 0.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.color-grading-changed("temperature", v); }
+                }
+                ParamSlider {
+                    label: "  Tint";
+                    value: root.selected-tint;
+                    minimum: -1.0;
+                    maximum: 1.0;
+                    fill-origin: 0.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.color-grading-changed("tint", v); }
+                }
+
+                Rectangle { height: 1px; background: Palette.border; }
+
+                Text {
+                    text: "LIFT (SHADOWS)";
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Palette.text-muted;
+                }
+                ParamSlider {
+                    label: "  Red";
+                    value: root.selected-lift-r;
+                    minimum: -1.0;
+                    maximum: 1.0;
+                    fill-origin: 0.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.color-grading-changed("lift_r", v); }
+                }
+                ParamSlider {
+                    label: "  Green";
+                    value: root.selected-lift-g;
+                    minimum: -1.0;
+                    maximum: 1.0;
+                    fill-origin: 0.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.color-grading-changed("lift_g", v); }
+                }
+                ParamSlider {
+                    label: "  Blue";
+                    value: root.selected-lift-b;
+                    minimum: -1.0;
+                    maximum: 1.0;
+                    fill-origin: 0.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.color-grading-changed("lift_b", v); }
+                }
+
+                Rectangle { height: 1px; background: Palette.border; }
+
+                Text {
+                    text: "GAMMA (MIDTONES)";
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Palette.text-muted;
+                }
+                ParamSlider {
+                    label: "  Red";
+                    value: root.selected-gamma-r;
+                    minimum: 0.0;
+                    maximum: 2.0;
+                    fill-origin: 1.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.color-grading-changed("gamma_r", v); }
+                }
+                ParamSlider {
+                    label: "  Green";
+                    value: root.selected-gamma-g;
+                    minimum: 0.0;
+                    maximum: 2.0;
+                    fill-origin: 1.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.color-grading-changed("gamma_g", v); }
+                }
+                ParamSlider {
+                    label: "  Blue";
+                    value: root.selected-gamma-b;
+                    minimum: 0.0;
+                    maximum: 2.0;
+                    fill-origin: 1.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.color-grading-changed("gamma_b", v); }
+                }
+
+                Rectangle { height: 1px; background: Palette.border; }
+
+                Text {
+                    text: "GAIN (HIGHLIGHTS)";
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Palette.text-muted;
+                }
+                ParamSlider {
+                    label: "  Red";
+                    value: root.selected-gain-r;
+                    minimum: 0.0;
+                    maximum: 2.0;
+                    fill-origin: 1.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.color-grading-changed("gain_r", v); }
+                }
+                ParamSlider {
+                    label: "  Green";
+                    value: root.selected-gain-g;
+                    minimum: 0.0;
+                    maximum: 2.0;
+                    fill-origin: 1.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.color-grading-changed("gain_g", v); }
+                }
+                ParamSlider {
+                    label: "  Blue";
+                    value: root.selected-gain-b;
+                    minimum: 0.0;
+                    maximum: 2.0;
+                    fill-origin: 1.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.color-grading-changed("gain_b", v); }
+                }
+
+                Rectangle { height: 1px; background: Palette.border; }
+
+                Text {
+                    text: "VIGNETTE";
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Palette.text-muted;
+                }
+                ParamSlider {
+                    label: "  Intensity";
+                    value: root.selected-vignette;
+                    minimum: 0.0;
+                    maximum: 1.0;
+                    fill-origin: 0.0;
+                    decimal-places: 2;
+                    pressed => { root.transform-gesture-begin(); }
+                    changed(v) => { root.color-grading-changed("vignette", v); }
+                }
             }
 
             // ── Audio ──
@@ -617,6 +804,7 @@ export component DetailsPanel inherits Rectangle {
                     value: root.selected-volume;
                     minimum: 0.0;
                     maximum: 2.0;
+                    fill-origin: 1.0;
                     show-percent: true;
                     pressed => { root.transform-gesture-begin(); }
                     changed(v) => { root.volume-changed(v); }
@@ -636,6 +824,7 @@ export component DetailsPanel inherits Rectangle {
                 InfoRow { label: "Duration";   value: root.selected-duration; }
                 InfoRow { label: "Frame rate"; value: root.selected-fps; }
             }
+        }
         }
     }
 }

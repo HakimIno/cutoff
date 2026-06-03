@@ -5,7 +5,6 @@ import { Sidebar } from "components/sidebar.slint";
 import { PreviewPanel } from "components/preview-panel.slint";
 import { DetailsPanel } from "components/details-panel.slint";
 import { Timeline, RulerTick, TrackData } from "components/timeline.slint";
-import { StatusFooter } from "components/status-footer.slint";
 import { ClipData } from "components/clip-card.slint";
 
 export { RulerTick, TrackData }
@@ -49,6 +48,18 @@ export component AppWindow inherits Window {
     in property <float> selected-saturation: 1.0;
     in property <string> selected-opacity-interp: "linear";
     in property <string> selected-rotation-interp: "linear";
+    in property <float> selected-lift-r: 0.0;
+    in property <float> selected-lift-g: 0.0;
+    in property <float> selected-lift-b: 0.0;
+    in property <float> selected-gamma-r: 1.0;
+    in property <float> selected-gamma-g: 1.0;
+    in property <float> selected-gamma-b: 1.0;
+    in property <float> selected-gain-r: 1.0;
+    in property <float> selected-gain-g: 1.0;
+    in property <float> selected-gain-b: 1.0;
+    in property <float> selected-temperature: 0.0;
+    in property <float> selected-tint: 0.0;
+    in property <float> selected-vignette: 0.0;
     in property <bool> selected-opacity-animated;
     in property <bool> selected-opacity-key;
     in property <bool> selected-scale-animated;
@@ -149,6 +160,7 @@ export component AppWindow inherits Window {
     callback selected-clip-brightness-changed(float);
     callback selected-clip-contrast-changed(float);
     callback selected-clip-saturation-changed(float);
+    callback selected-clip-color-grading-changed(string, float);
     callback selected-clip-transform-gesture-begin();
     callback selected-clip-keyframe-toggle(int);
     callback selected-clip-keyframe-interp-changed(int, string);
@@ -158,6 +170,9 @@ export component AppWindow inherits Window {
     forward-focus: key-handler;
 
     key-handler := FocusScope {
+        width: 100%;
+        height: 100%;
+
         key-pressed(event) => {
             // Meta (Cmd on macOS) or Control (Win/Linux) shortcuts first
             // so they don't get shadowed by the bare letter handlers below.
@@ -235,6 +250,8 @@ export component AppWindow inherits Window {
         }
 
         VerticalLayout {
+            width: 100%;
+            height: 100%;
             spacing: 0px;
 
             Header {
@@ -250,6 +267,7 @@ export component AppWindow inherits Window {
             }
 
             HorizontalLayout {
+                width: 100%;
                 spacing: 0px;
                 vertical-stretch: 1;
 
@@ -266,12 +284,13 @@ export component AppWindow inherits Window {
 
                 // Main center column
                 VerticalLayout {
-                    spacing: 0px;
                     horizontal-stretch: 1;
+                    spacing: 0px;
 
-                    // Preview area
+                    // Preview area — dominant region (≈60%).
                     Rectangle {
-                        vertical-stretch: 1;
+                        vertical-stretch: 3;
+                        clip: true;
                         HorizontalLayout {
                             padding: Theme.spacing-lg;
                             PreviewPanel {
@@ -307,9 +326,10 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    // Timeline lane
+                    // Timeline lane — ≈40%, with a sensible minimum.
                     Rectangle {
-                        height: 420px;
+                        vertical-stretch: 2;
+                        min-height: 240px;
                         background: Palette.surface;
                         Rectangle {
                             x: 0; y: 0;
@@ -317,6 +337,8 @@ export component AppWindow inherits Window {
                             background: Palette.border;
                         }
                         Timeline {
+                            width: 100%;
+                            height: 100%;
                             tracks: root.tracks;
                             all-clips: root.clips;
                             ruler-ticks: root.ruler-ticks;
@@ -375,6 +397,18 @@ export component AppWindow inherits Window {
                     selected-contrast: root.selected-contrast;
                     selected-saturation: root.selected-saturation;
                     selected-opacity-interp: root.selected-opacity-interp;
+                    selected-lift-r: root.selected-lift-r;
+                    selected-lift-g: root.selected-lift-g;
+                    selected-lift-b: root.selected-lift-b;
+                    selected-gamma-r: root.selected-gamma-r;
+                    selected-gamma-g: root.selected-gamma-g;
+                    selected-gamma-b: root.selected-gamma-b;
+                    selected-gain-r: root.selected-gain-r;
+                    selected-gain-g: root.selected-gain-g;
+                    selected-gain-b: root.selected-gain-b;
+                    selected-temperature: root.selected-temperature;
+                    selected-tint: root.selected-tint;
+                    selected-vignette: root.selected-vignette;
                     selected-rotation-interp: root.selected-rotation-interp;
                     selected-opacity-animated: root.selected-opacity-animated;
                     selected-opacity-key: root.selected-opacity-key;
@@ -401,20 +435,10 @@ export component AppWindow inherits Window {
                     brightness-changed(b) => { root.selected-clip-brightness-changed(b); }
                     contrast-changed(c) => { root.selected-clip-contrast-changed(c); }
                     saturation-changed(s) => { root.selected-clip-saturation-changed(s); }
+                    color-grading-changed(name, val) => { root.selected-clip-color-grading-changed(name, val); }
                     transform-gesture-begin => { root.selected-clip-transform-gesture-begin(); }
                     keyframe-interp-changed(ch, mode) => { root.selected-clip-keyframe-interp-changed(ch, mode); }
                 }
-            }
-
-            StatusFooter {
-                status-text: root.status-text;
-                progress: root.export-progress;
-                exporting: root.exporting;
-                can-export: root.can-export;
-                preview-fps: root.preview-fps;
-                playing: root.playing;
-                master-muted: root.master-muted;
-                cancel-clicked => { root.cancel-clicked(); }
             }
         }
 

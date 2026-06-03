@@ -521,6 +521,24 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
         });
     }
     {
+        let tx = cmd_tx.clone();
+        let weak = window.as_weak();
+        let pl = state.playlist.clone();
+        let tracks = state.tracks.clone();
+        let proj = state.project.clone();
+        window.on_selected_clip_color_grading_changed(move |name, val| {
+            on_selected_clip_color_grading_changed(
+                weak.clone(),
+                tx.clone(),
+                pl.clone(),
+                tracks.clone(),
+                proj.clone(),
+                name.to_string(),
+                val,
+            );
+        });
+    }
+    {
         let weak = window.as_weak();
         let pl = state.playlist.clone();
         let undo = state.undo.clone();
@@ -805,7 +823,7 @@ fn select_and_open(
     clip_id: Uuid,
     initial_seek_us: Option<i64>,
 ) {
-    let (_path, name, codec, resolution, duration, fps, _trim_in_us, _trim_out_us, volume, muted, opacity, scale, position_x, position_y, scale_x, scale_y, rotation_deg, flip_h, flip_v, brightness, contrast, saturation) = {
+    let (_path, name, codec, resolution, duration, fps, _trim_in_us, _trim_out_us, volume, muted, opacity, scale, position_x, position_y, scale_x, scale_y, rotation_deg, flip_h, flip_v, brightness, contrast, saturation, color_grading) = {
         let pl = playlist.lock().expect("playlist mutex poisoned");
         let Some(clip) = pl.clips().iter().find(|c| c.id == clip_id) else {
             return;
@@ -847,6 +865,7 @@ fn select_and_open(
             clip.brightness,
             clip.contrast,
             clip.saturation,
+            clip.color_grading,
         )
     };
 
@@ -903,6 +922,18 @@ fn select_and_open(
         window.set_selected_brightness(brightness);
         window.set_selected_contrast(contrast);
         window.set_selected_saturation(saturation);
+        window.set_selected_lift_r(color_grading.lift_r);
+        window.set_selected_lift_g(color_grading.lift_g);
+        window.set_selected_lift_b(color_grading.lift_b);
+        window.set_selected_gamma_r(color_grading.gamma_r);
+        window.set_selected_gamma_g(color_grading.gamma_g);
+        window.set_selected_gamma_b(color_grading.gamma_b);
+        window.set_selected_gain_r(color_grading.gain_r);
+        window.set_selected_gain_g(color_grading.gain_g);
+        window.set_selected_gain_b(color_grading.gain_b);
+        window.set_selected_temperature(color_grading.temperature);
+        window.set_selected_tint(color_grading.tint);
+        window.set_selected_vignette(color_grading.vignette);
         window.set_playing(false);
     }
 
@@ -1933,6 +1964,42 @@ fn on_selected_clip_transform_f32(
             let mut pl = playlist.lock().expect("playlist mutex poisoned");
             if let Some(c) = pl.clips_mut().iter_mut().find(|clip| clip.id == uuid) {
                 apply(c, value);
+            }
+        }
+        sync_preview(&playlist, &tracks, &project, &cmd_tx);
+    }
+}
+
+fn on_selected_clip_color_grading_changed(
+    weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
+    playlist: SharedPlaylist,
+    tracks: super::SharedTracks,
+    project: super::SharedProject,
+    name: String,
+    value: f32,
+) {
+    if let Some(window) = weak.upgrade() {
+        let sel_id = window.get_selected_id();
+        let Ok(uuid) = Uuid::parse_str(sel_id.as_str()) else { return; };
+        {
+            let mut pl = playlist.lock().expect("playlist mutex poisoned");
+            if let Some(c) = pl.clips_mut().iter_mut().find(|clip| clip.id == uuid) {
+                match name.as_str() {
+                    "temperature" => c.color_grading.temperature = value,
+                    "tint" => c.color_grading.tint = value,
+                    "lift_r" => c.color_grading.lift_r = value,
+                    "lift_g" => c.color_grading.lift_g = value,
+                    "lift_b" => c.color_grading.lift_b = value,
+                    "gamma_r" => c.color_grading.gamma_r = value,
+                    "gamma_g" => c.color_grading.gamma_g = value,
+                    "gamma_b" => c.color_grading.gamma_b = value,
+                    "gain_r" => c.color_grading.gain_r = value,
+                    "gain_g" => c.color_grading.gain_g = value,
+                    "gain_b" => c.color_grading.gain_b = value,
+                    "vignette" => c.color_grading.vignette = value,
+                    _ => {}
+                }
             }
         }
         sync_preview(&playlist, &tracks, &project, &cmd_tx);

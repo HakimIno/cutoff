@@ -97,6 +97,14 @@ export component PreviewPanel inherits Rectangle {
             background: #000000;
             vertical-stretch: 1;
             clip: true;
+            // Don't let the video frame's natural resolution (e.g. 1920×1080)
+            // inflate this area's preferred size — keep it driven purely by the
+            // parent layout's stretch ratio so the preview doesn't grow when a
+            // clip is loaded.
+            preferred-width: 0px;
+            preferred-height: 0px;
+            min-width: 0px;
+            min-height: 0px;
 
             // nw and nh as float/lengths
             property <length> nw: root.project-width * 1px;

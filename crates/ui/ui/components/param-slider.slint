@@ -1,8 +1,8 @@
 import { Palette } from "../styles/palette.slint";
 import { Theme } from "../styles/theme.slint";
 
-/// Label + horizontal slider + value. Use `fill-origin` for the neutral point on the track
-/// (e.g. 0 for brightness −1…1, 1 for contrast/saturation 0…2).
+/// Compact property row: fixed label | stretch slider | fixed value.
+/// `fill-origin` = neutral on track (0 for brightness −1…1, 1 for contrast/saturation 0…2).
 export component ParamSlider inherits Rectangle {
     in property <string> label;
     in-out property <float> value;
@@ -11,8 +11,8 @@ export component ParamSlider inherits Rectangle {
     in property <float> fill-origin: 0.0;
     in property <int> decimal-places: 2;
     in property <bool> show-percent: false;
-    in property <length> label-width: 66px;
-    in property <length> value-width: 34px;
+    in property <length> label-width: 72px;
+    in property <length> value-width: 40px;
     callback changed(float);
     callback pressed();
 
@@ -30,40 +30,39 @@ export component ParamSlider inherits Rectangle {
                     ? (Math.round(root.value * 10) / 10)
                     : (Math.round(root.value * 100) / 100)));
 
+    width: 100%;
     height: 28px;
 
     HorizontalLayout {
-        spacing: Theme.spacing-sm;
-        alignment: center;
+        width: 100%;
+        spacing: 8px;
 
         Text {
             text: root.label;
             color: Palette.text-muted;
             font-size: Theme.font-sm;
             width: root.label-width;
+            horizontal-alignment: left;
             vertical-alignment: center;
         }
 
         slider-host := Rectangle {
             horizontal-stretch: 1;
-            height: 22px;
-            min-width: 48px;
+            height: 100%;
+            min-width: 0px;
 
-            property <length> track-y: (parent.height - 4px) / 2;
-            property <length> thumb-x: root.value-frac * parent.width;
+            property <length> thumb-x: root.value-frac * self.width;
 
             Rectangle {
-                y: parent.track-y;
+                y: (parent.height - 4px) / 2;
                 width: 100%;
                 height: 4px;
                 border-radius: 2px;
                 background: #25272e;
-                border-width: 1px;
-                border-color: Palette.border;
 
                 Rectangle {
                     x: root.fill-start * parent.width;
-                    width: (root.fill-end - root.fill-start) * parent.width;
+                    width: max((root.fill-end - root.fill-start) * parent.width, 0px);
                     height: 100%;
                     border-radius: 2px;
                     background: Palette.accent-2;
@@ -71,21 +70,12 @@ export component ParamSlider inherits Rectangle {
             }
 
             Rectangle {
-                width: 18px;
-                height: 18px;
-                border-radius: 9px;
-                background: Palette.accent-glow;
-                x: parent.thumb-x - self.width / 2;
-                y: (parent.height - self.height) / 2;
-            }
-
-            Rectangle {
-                width: 10px;
-                height: 10px;
-                border-radius: 5px;
+                width: 12px;
+                height: 12px;
+                border-radius: 6px;
                 background: Palette.accent-2;
                 border-width: 1px;
-                border-color: #ffffff55;
+                border-color: #ffffff66;
                 x: parent.thumb-x - self.width / 2;
                 y: (parent.height - self.height) / 2;
             }

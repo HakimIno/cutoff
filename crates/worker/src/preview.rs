@@ -1178,6 +1178,7 @@ fn render_timeline_frame(
                 brightness: xf.brightness,
                 contrast: xf.contrast,
                 saturation: xf.saturation,
+                color_grading: xf.color_grading,
             });
         }
 

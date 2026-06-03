@@ -301,6 +301,59 @@ impl Crop {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ColorGrading {
+    #[serde(default = "default_lgg_neutral")]
+    pub lift_r: f32,
+    #[serde(default = "default_lgg_neutral")]
+    pub lift_g: f32,
+    #[serde(default = "default_lgg_neutral")]
+    pub lift_b: f32,
+
+    #[serde(default = "default_lgg_one")]
+    pub gamma_r: f32,
+    #[serde(default = "default_lgg_one")]
+    pub gamma_g: f32,
+    #[serde(default = "default_lgg_one")]
+    pub gamma_b: f32,
+
+    #[serde(default = "default_lgg_one")]
+    pub gain_r: f32,
+    #[serde(default = "default_lgg_one")]
+    pub gain_g: f32,
+    #[serde(default = "default_lgg_one")]
+    pub gain_b: f32,
+
+    #[serde(default = "default_lgg_neutral")]
+    pub temperature: f32, // -1.0 to 1.0
+    #[serde(default = "default_lgg_neutral")]
+    pub tint: f32,        // -1.0 to 1.0
+    #[serde(default = "default_lgg_neutral")]
+    pub vignette: f32,    // 0.0 to 1.0
+}
+
+fn default_lgg_neutral() -> f32 { 0.0 }
+fn default_lgg_one() -> f32 { 1.0 }
+
+impl Default for ColorGrading {
+    fn default() -> Self {
+        Self {
+            lift_r: 0.0,
+            lift_g: 0.0,
+            lift_b: 0.0,
+            gamma_r: 1.0,
+            gamma_g: 1.0,
+            gamma_b: 1.0,
+            gain_r: 1.0,
+            gain_g: 1.0,
+            gain_b: 1.0,
+            temperature: 0.0,
+            tint: 0.0,
+            vignette: 0.0,
+        }
+    }
+}
+
 /// Fully-resolved transform values at a single point in time. All renderers
 /// (preview + export) read *only* this struct so they stay perfectly in sync.
 ///
@@ -324,6 +377,7 @@ pub struct ResolvedTransform {
     pub brightness: f32,
     pub contrast: f32,
     pub saturation: f32,
+    pub color_grading: ColorGrading,
 }
 
 impl Default for ResolvedTransform {
@@ -341,6 +395,7 @@ impl Default for ResolvedTransform {
             brightness: 0.0,
             contrast: 1.0,
             saturation: 1.0,
+            color_grading: ColorGrading::default(),
         }
     }
 }

@@ -18,7 +18,18 @@ struct ClipUniforms {
     brightness: f32,
     contrast: f32,
     saturation: f32,
-    padding: f32,
+    lift_r: f32,
+    lift_g: f32,
+    lift_b: f32,
+    gamma_r: f32,
+    gamma_g: f32,
+    gamma_b: f32,
+    gain_r: f32,
+    gain_g: f32,
+    gain_b: f32,
+    temperature: f32,
+    tint: f32,
+    vignette: f32,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: ClipUniforms;
@@ -104,8 +115,31 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let luminance = dot(color.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
     color = vec4<f32>(mix(vec3<f32>(luminance), color.rgb, uniforms.saturation), color.a);
 
-    // Clamp values to prevent overflow/distortion
+    // Clamp values before advanced operations
     color = clamp(color, vec4<f32>(0.0), vec4<f32>(1.0));
+
+    // Apply white balance (Temperature & Tint)
+    color = vec4<f32>(
+        color.r + uniforms.temperature * 0.1 - uniforms.tint * 0.05,
+        color.g + uniforms.tint * 0.1,
+        color.b - uniforms.temperature * 0.1 - uniforms.tint * 0.05,
+        color.a
+    );
+    color = clamp(color, vec4<f32>(0.0), vec4<f32>(1.0));
+
+    // Apply Lift, Gamma, Gain (3-Way Color Grading)
+    let lift = vec3<f32>(uniforms.lift_r, uniforms.lift_g, uniforms.lift_b);
+    let gamma = vec3<f32>(uniforms.gamma_r, uniforms.gamma_g, uniforms.gamma_b);
+    let gain = vec3<f32>(uniforms.gain_r, uniforms.gain_g, uniforms.gain_b);
+
+    var lgg = color.rgb * gain + lift * (1.0 - color.rgb);
+    lgg = clamp(lgg, vec3<f32>(0.0), vec3<f32>(1.0));
+    color = vec4<f32>(pow(lgg, gamma), color.a);
+
+    // Apply Vignette (Cinematic Film Border Edge Darkening)
+    let dist = length(in.uv - vec2<f32>(0.5));
+    let vignette_factor = smoothstep(0.8 - uniforms.vignette * 0.4, 1.2 - uniforms.vignette * 0.4, dist);
+    color = vec4<f32>(mix(color.rgb, vec3<f32>(0.0), vignette_factor * uniforms.vignette), color.a);
 
     color.a = color.a * uniforms.opacity;
     return color;
