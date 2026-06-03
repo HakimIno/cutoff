@@ -132,7 +132,7 @@ fn asset_thumb_paths(clip: &Clip) -> Vec<PathBuf> {
     let Some(data_dir) = DATA_DIR.get() else {
         return Vec::new();
     };
-    let dir = data_dir.join("thumbs").join(clip.id.to_string());
+    let dir = data_dir.join("thumbs").join(clip.asset_id().to_string());
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -156,7 +156,7 @@ fn asset_waveform_path(clip: &Clip) -> Option<PathBuf> {
     }
     let path = DATA_DIR
         .get()
-        .map(|data_dir| data_dir.join("waveforms").join(format!("{}.bin", clip.id)))?;
+        .map(|data_dir| data_dir.join("waveforms").join(format!("{}.bin", clip.asset_id())))?;
     path.exists().then_some(path)
 }
 

@@ -40,12 +40,22 @@ pub fn split_at(playlist: &mut Playlist, id: ClipId, local_us: i64) -> CoreResul
         let original_trim_out = left.trim_out;
         left.trim_out = Duration::from_micros(split_abs_us as u64);
 
+        let asset_id = left.asset_id();
         let mut right = left.clone();
         right.id = uuid::Uuid::new_v4();
         right.trim_in = Duration::from_micros(split_abs_us as u64);
         right.trim_out = original_trim_out;
-        // Thumbnails are tied to the source asset, so they can be shared.
+        // Thumbnails/waveform live on disk under the original clip's id; the
+        // right half has a fresh id, so point it back at the source asset so
+        // its preview imagery resolves instead of coming up blank.
         right.thumbnails = left.thumbnails.clone();
+        right.origin_id = Some(asset_id);
+        // The right half is inserted directly after the left on the same
+        // track, so it must pack against the (now shorter) left rather than
+        // inherit the left's absolute pin — otherwise a split on a dragged
+        // clip would stack both halves at the same start. `None` packs it
+        // flush after the left half.
+        right.start_us = None;
         right
     };
 
@@ -132,6 +142,38 @@ mod tests {
         assert_eq!(pl.clips()[0].path, pl.clips()[1].path);
         // Right half has a new id.
         assert_ne!(pl.clips()[0].id, pl.clips()[1].id);
+    }
+
+    #[test]
+    fn split_on_pinned_clip_does_not_inherit_its_pin() {
+        // A clip dragged to an absolute position (start_us = Some) must not
+        // pass that pin to its right half, or both halves would stack.
+        let mut pl = Playlist::new();
+        let mut c = clip(10.0);
+        c.start_us = Some(20_000_000);
+        pl.push(c);
+        let id = pl.clips()[0].id;
+        split_at(&mut pl, id, 4_000_000).unwrap();
+        assert_eq!(pl.clips()[0].start_us, Some(20_000_000), "left keeps its pin");
+        assert_eq!(pl.clips()[1].start_us, None, "right packs after left, no pin");
+    }
+
+    #[test]
+    fn split_right_half_points_at_source_assets() {
+        // Thumbnails/waveform live on disk under the original clip's id; the
+        // new right half must resolve to that same asset id, not its own new id.
+        let mut pl = Playlist::new();
+        pl.push(clip(10.0));
+        let orig = pl.clips()[0].id;
+        split_at(&mut pl, orig, 4_000_000).unwrap();
+        let right = &pl.clips()[1];
+        assert_ne!(right.id, orig, "right has a fresh id");
+        assert_eq!(right.origin_id, Some(orig));
+        assert_eq!(right.asset_id(), orig, "right resolves the original's assets");
+        // Splitting the right half again must keep pointing at the original.
+        let right_id = right.id;
+        split_at(&mut pl, right_id, 2_000_000).unwrap();
+        assert_eq!(pl.clips()[2].asset_id(), orig, "asset id survives a second split");
     }
 
     #[test]

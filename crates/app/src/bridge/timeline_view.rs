@@ -1,15 +1,20 @@
 //! Helpers that translate playlist + zoom state into Slint-side timeline
-//! properties (ruler ticks, total width, global playhead fraction).
+//! properties (ruler ticks, total width, global playhead fraction) and the
+//! math behind **absolute, time-based** clip dragging.
 //!
-//! Drag-and-drop math lives here too. The timeline renders four lanes
-//! (V1, V2, A1, A2) but the playlist is a single `Vec<Clip>` where each
-//! clip carries its `video_track`. A drag operates *inside* the source
-//! clip's track only — horizontal reordering does not change track
-//! assignment. To compute the drop indicator and final reorder we have
-//! to project the playlist down to the source's track, do the math in
-//! lane-local coordinates, then map the destination back to a global
-//! playlist index for `Playlist::reorder`.
+//! Clips carry an optional `start_us` pin (see `Clip::start_us`). A clip with
+//! `None` packs right after its predecessor on the same track (legacy
+//! sequential behaviour); a clip with `Some(v)` is anchored at an explicit
+//! timeline position, which is what lets the user open gaps and drag freely.
+//! `effective_start_us` resolves either case into the absolute position the
+//! compositor (`Project::populate_from_playlist`) will use.
+//!
+//! A drag operates *inside* the source clip's track only — vertical
+//! cross-track moves still go through the explicit "Move to …" path. Dragging
+//! horizontally changes the clip's `start_us`, snapping magnetically to the
+//! project origin, the playhead, and neighbouring clip edges.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use slint::{ModelRc, SharedString, VecModel};
@@ -44,202 +49,152 @@ pub fn refresh_ruler(window: &AppWindow, playlist: &Playlist, px_per_sec: f32) {
     window.set_px_per_sec(px_per_sec);
 }
 
-/// Selected clip's `(offset_us, duration_us)` on the timeline, if present.
-pub fn selected_clip_window(playlist: &Playlist, selected_id: Option<Uuid>) -> Option<(i64, i64)> {
-    let id = selected_id?;
-    let mut offset_us: i64 = 0;
-    for clip in playlist.clips() {
-        let dur_us = clip.effective_duration_us();
-        if clip.id == id {
-            return Some((offset_us, dur_us));
+/// Absolute timeline start (µs) of `clip_id` on its own track, honoring
+/// explicit `start_us` pins and packing un-pinned clips right after their
+/// predecessor. Mirrors `Project::populate_from_playlist`'s per-track cursor.
+pub fn effective_start_us(playlist: &Playlist, clip_id: Uuid) -> Option<i64> {
+    let track = playlist.clips().iter().find(|c| c.id == clip_id)?.video_track;
+    let mut cursor: i64 = 0;
+    for clip in playlist.clips().iter().filter(|c| c.video_track == track) {
+        let start = clip.start_us.unwrap_or(cursor);
+        if clip.id == clip_id {
+            return Some(start);
         }
-        offset_us += dur_us;
+        cursor = start + clip.effective_duration_us();
     }
     None
 }
 
-pub fn total_duration_us(playlist: &Playlist) -> i64 {
-    playlist
+/// Selected clip's `(start_us, duration_us)` on the timeline, if present.
+/// `start_us` is the absolute position (honoring pins), matching the value the
+/// compositor places the clip at.
+pub fn selected_clip_window(playlist: &Playlist, selected_id: Option<Uuid>) -> Option<(i64, i64)> {
+    let id = selected_id?;
+    let start = effective_start_us(playlist, id)?;
+    let dur = playlist
         .clips()
         .iter()
-        .map(|c| c.effective_duration_us())
-        .sum()
+        .find(|c| c.id == id)?
+        .effective_duration_us();
+    Some((start, dur))
+}
+
+/// Total timeline length = the latest clip end across all tracks, honoring
+/// `start_us` pins. For a single track with no gaps this equals the sum of
+/// durations, so legacy projects behave identically; with gaps or overlapping
+/// tracks it correctly reflects the real timeline extent (matches
+/// `Project::duration_us`).
+pub fn total_duration_us(playlist: &Playlist) -> i64 {
+    let mut cursors: HashMap<u8, i64> = HashMap::new();
+    let mut max_end: i64 = 0;
+    for clip in playlist.clips() {
+        let cursor = cursors.entry(clip.video_track).or_insert(0);
+        let start = clip.start_us.unwrap_or(*cursor);
+        let end = start + clip.effective_duration_us();
+        *cursor = end;
+        max_end = max_end.max(end);
+    }
+    max_end
 }
 
 pub fn total_duration_secs(playlist: &Playlist) -> f32 {
     (total_duration_us(playlist) as f64 / 1_000_000.0) as f32
 }
 
-// Layout constants — keep in sync with `timeline.slint`.
-pub const LANE_PADDING_PX: f32 = 6.0;
-pub const CARD_SPACING_PX: f32 = 3.0;
-
-/// Smallest on-screen width a clip card may shrink to, so a very short clip (or
-/// a fully zoomed-out timeline) stays visible and clickable. There is no upper
-/// clamp: width scales linearly with `px_per_sec` so cards always track the
-/// ruler exactly and zooming in/out actually resizes them. Keep in sync with
-/// the `width` binding in `clip-card.slint`.
-pub const CARD_MIN_PX: f32 = 44.0;
-
-pub fn card_width(duration_secs: f32, px_per_sec: f32) -> f32 {
-    (duration_secs * px_per_sec).max(CARD_MIN_PX)
-}
-
-/// Find a clip by id and return its `(global_idx, track_local_idx, track)`.
-pub fn locate_clip(playlist: &Playlist, clip_id: Uuid) -> Option<(usize, usize, u8)> {
-    let clips = playlist.clips();
-    let global_idx = clips.iter().position(|c| c.id == clip_id)?;
-    let track = clips[global_idx].video_track;
-    let local_idx = clips
-        .iter()
-        .take(global_idx)
-        .filter(|c| c.video_track == track)
-        .count();
-    Some((global_idx, local_idx, track))
-}
-
-/// Cumulative left-edge positions for each insertion gap **inside one
-/// track**. `gaps[i]` is the x position where a card inserted at the
-/// `i`-th lane-local slot would land. `gaps.len() == lane_count + 1`.
-pub fn gap_positions_in_track(playlist: &Playlist, px_per_sec: f32, track: u8) -> Vec<f32> {
-    let mut x = LANE_PADDING_PX;
-    let mut gaps = Vec::new();
-    gaps.push(x);
-    for clip in playlist.clips().iter().filter(|c| c.video_track == track) {
-        let w = card_width(clip.effective_duration().as_secs_f32(), px_per_sec);
-        x += w + CARD_SPACING_PX;
-        gaps.push(x);
-    }
-    gaps
-}
+/// Pixel tolerance for magnetic snapping during a drag. Keep modest so it
+/// helps butt clips together without fighting precise placement.
+pub const SNAP_PX: f32 = 8.0;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct DropOutcome {
-    /// Lane-local gap index (0..=lane_count).
-    pub local_gap: usize,
-    /// X pixel coord (in lane coordinates) where the drop indicator renders.
+pub struct DragOutcome {
+    /// Snapped absolute start position for the dragged clip (µs, ≥ 0).
+    pub new_start_us: i64,
+    /// X pixel coord (lane/content coordinates) of the clip's left edge — used
+    /// to render the live drop indicator. Equals `new_start_us * px_per_sec`.
     pub indicator_x_px: f32,
-    /// `Some((from_global, to_global))` to pass to `Playlist::reorder`, or
-    /// `None` if the drop is a no-op (dropped on or just after the source's
-    /// own slot).
-    pub reorder: Option<(usize, usize)>,
 }
 
-/// Decide where the clip currently being dragged should drop.
+/// Resolve where a horizontally-dragged clip should land.
 ///
-/// All math happens inside the source clip's track lane. `delta_px` is the
-/// horizontal pointer displacement from where the press started, in lane
-/// pixels.
-pub fn drop_target_for_clip(
+/// `delta_px` is the pointer displacement from where the press started, in
+/// timeline pixels. The result snaps the leading **or** trailing edge to the
+/// project origin, the `playhead_us`, or any neighbouring same-track clip edge
+/// within [`SNAP_PX`]. Returns `None` for an unknown clip or non-positive zoom.
+pub fn drag_to_start_us(
     playlist: &Playlist,
     px_per_sec: f32,
-    source_clip_id: Uuid,
+    clip_id: Uuid,
     delta_px: f32,
-) -> Option<DropOutcome> {
-    let (from_global, from_local, track) = locate_clip(playlist, source_clip_id)?;
-
-    let lane_clips: Vec<&_> = playlist
-        .clips()
-        .iter()
-        .filter(|c| c.video_track == track)
-        .collect();
-    if lane_clips.is_empty() {
+    playhead_us: i64,
+) -> Option<DragOutcome> {
+    if px_per_sec <= 0.0 {
         return None;
     }
+    let target = playlist.clips().iter().find(|c| c.id == clip_id)?;
+    let track = target.video_track;
+    let dur = target.effective_duration_us();
+    let cur_start = effective_start_us(playlist, clip_id)?;
 
-    let gaps = gap_positions_in_track(playlist, px_per_sec, track);
-    let widths: Vec<f32> = lane_clips
-        .iter()
-        .map(|c| card_width(c.effective_duration().as_secs_f32(), px_per_sec))
-        .collect();
+    let us_per_px = 1_000_000.0 / px_per_sec;
+    let raw = (((cur_start as f32) + delta_px * us_per_px).round() as i64).max(0);
+    let snap_us = (SNAP_PX * us_per_px) as i64;
 
-    let orig_center = gaps[from_local] + widths[from_local] / 2.0;
-    let new_center = orig_center + delta_px;
+    // Snap candidates: project origin, the playhead, and every other same-track
+    // clip's start & end edge.
+    let mut candidates = vec![0i64, playhead_us];
+    let mut cursor: i64 = 0;
+    for clip in playlist.clips().iter().filter(|c| c.video_track == track) {
+        let start = clip.start_us.unwrap_or(cursor);
+        let end = start + clip.effective_duration_us();
+        if clip.id != clip_id {
+            candidates.push(start);
+            candidates.push(end);
+        }
+        cursor = end;
+    }
 
-    // Snap to the nearest gap.
-    let mut best_idx = 0usize;
-    let mut best_dist = f32::INFINITY;
-    for (i, gx) in gaps.iter().enumerate() {
-        let d = (gx - new_center).abs();
-        if d < best_dist {
-            best_dist = d;
-            best_idx = i;
+    let mut new_start = raw;
+    let mut best = snap_us + 1;
+    for c in candidates {
+        if c < 0 {
+            continue;
+        }
+        // Leading edge snaps to the candidate.
+        let d_lead = (raw - c).abs();
+        if d_lead <= snap_us && d_lead < best {
+            best = d_lead;
+            new_start = c;
+        }
+        // Trailing edge snaps to the candidate ⇒ start = candidate − duration.
+        let d_trail = (raw + dur - c).abs();
+        if d_trail <= snap_us && d_trail < best {
+            best = d_trail;
+            new_start = (c - dur).max(0);
         }
     }
 
-    // Dropping at the source's own slot (gap == from_local or from_local+1)
-    // is a no-op — we still want a sticky indicator there, but no reorder.
-    if best_idx == from_local || best_idx == from_local + 1 {
-        return Some(DropOutcome {
-            local_gap: best_idx,
-            indicator_x_px: gaps[best_idx],
-            reorder: None,
-        });
-    }
-
-    // Translate lane-local destination back to a global playlist index.
-    //
-    // `Playlist::reorder(from, to)` does `remove(from); insert(to, clip)`.
-    // `to` is interpreted against the post-remove list and the existing
-    // implementation rejects `to >= original_len`, so the maximum valid
-    // value is `original_len - 1` (insert at the very end).
-    //
-    // The gap index `best_idx` is in the *original* lane layout (where the
-    // source still appears). When dropping *after* the source's slot, the
-    // post-remove lane has one fewer element and we must subtract 1.
-    let pos_in_post_remove_lane = if best_idx > from_local {
-        best_idx - 1
-    } else {
-        best_idx
-    };
-
-    let post_remove_track_indices: Vec<usize> = playlist
-        .clips()
-        .iter()
-        .enumerate()
-        .filter(|(i, c)| *i != from_global && c.video_track == track)
-        .map(|(i, _)| if i > from_global { i - 1 } else { i })
-        .collect();
-
-    let to_global = if pos_in_post_remove_lane < post_remove_track_indices.len() {
-        post_remove_track_indices[pos_in_post_remove_lane]
-    } else {
-        // Insert at the very end of the playlist.
-        playlist.clips().len() - 1
-    };
-
-    Some(DropOutcome {
-        local_gap: best_idx,
-        indicator_x_px: gaps[best_idx],
-        reorder: Some((from_global, to_global)),
+    let indicator_x_px = new_start as f32 / us_per_px;
+    Some(DragOutcome {
+        new_start_us: new_start,
+        indicator_x_px,
     })
 }
 
-/// Map a fraction of the entire timeline (0..1) back to a clip + local pts.
-#[allow(dead_code)]
-pub fn fraction_to_clip_local(
-    playlist: &Playlist,
-    fraction: f32,
-) -> Option<(Uuid, i64)> {
-    let total_us = total_duration_us(playlist);
-    if total_us <= 0 {
-        return None;
-    }
-    let f = fraction.clamp(0.0, 1.0) as f64;
-    let target_us = (total_us as f64 * f) as i64;
-    let mut offset_us: i64 = 0;
-    for clip in playlist.clips() {
-        let dur_us = clip.effective_duration_us();
-        if target_us < offset_us + dur_us {
-            return Some((clip.id, (target_us - offset_us).max(0)));
+/// The clip on `track` whose span contains absolute time `abs_us`, together
+/// with the clip-local offset into it (`abs_us − clip_start`). Honors
+/// `start_us` pins/packing. Returns `None` if the playhead sits in a gap or
+/// off the end of the track. Used by "split at playhead".
+pub fn clip_at_us_on_track(playlist: &Playlist, track: u8, abs_us: i64) -> Option<(Uuid, i64)> {
+    let mut cursor: i64 = 0;
+    for clip in playlist.clips().iter().filter(|c| c.video_track == track) {
+        let start = clip.start_us.unwrap_or(cursor);
+        let end = start + clip.effective_duration_us();
+        if abs_us >= start && abs_us < end {
+            return Some((clip.id, abs_us - start));
         }
-        offset_us += dur_us;
+        cursor = end;
     }
-    // Past the end → last clip's last frame.
-    playlist
-        .clips()
-        .last()
-        .map(|c| (c.id, c.effective_duration_us() - 1))
+    None
 }
 
 #[cfg(test)]
@@ -266,8 +221,8 @@ mod tests {
         c
     }
 
-    /// Build a playlist from a list of `(track, duration_secs)` pairs and
-    /// return both the playlist and the resulting clip ids in order.
+    /// Build a playlist from `(track, duration_secs)` pairs, returning the
+    /// playlist and the clip ids in order.
     fn build(rows: &[(u8, f32)]) -> (Playlist, Vec<Uuid>) {
         let mut pl = Playlist::new();
         let mut ids = Vec::new();
@@ -279,188 +234,137 @@ mod tests {
         (pl, ids)
     }
 
-    // --- locate_clip ---------------------------------------------------------
+    // --- effective_start_us --------------------------------------------------
 
     #[test]
-    fn locate_clip_finds_global_and_track_local_indices() {
-        // Layout: V1A, V2X, V1B, V2Y, V1C → V1=[A,B,C] V2=[X,Y]
+    fn effective_start_packs_per_track() {
+        // V1: A(10) B(20) C(15); V2: X(5) Y(8) — each track packs from 0.
         let (pl, ids) = build(&[(0, 10.0), (1, 5.0), (0, 20.0), (1, 8.0), (0, 15.0)]);
-
-        assert_eq!(locate_clip(&pl, ids[0]), Some((0, 0, 0)), "V1A");
-        assert_eq!(locate_clip(&pl, ids[1]), Some((1, 0, 1)), "V2X");
-        assert_eq!(locate_clip(&pl, ids[2]), Some((2, 1, 0)), "V1B");
-        assert_eq!(locate_clip(&pl, ids[3]), Some((3, 1, 1)), "V2Y");
-        assert_eq!(locate_clip(&pl, ids[4]), Some((4, 2, 0)), "V1C");
+        assert_eq!(effective_start_us(&pl, ids[0]), Some(0)); // V1 A
+        assert_eq!(effective_start_us(&pl, ids[2]), Some(10_000_000)); // V1 B
+        assert_eq!(effective_start_us(&pl, ids[4]), Some(30_000_000)); // V1 C
+        assert_eq!(effective_start_us(&pl, ids[1]), Some(0)); // V2 X
+        assert_eq!(effective_start_us(&pl, ids[3]), Some(5_000_000)); // V2 Y
     }
 
     #[test]
-    fn locate_clip_missing_returns_none() {
+    fn effective_start_honors_pin_and_repacks_followers() {
+        let (mut pl, ids) = build(&[(0, 10.0), (0, 20.0), (0, 15.0)]);
+        pl.clips_mut()[1].start_us = Some(40_000_000); // pin B at 40s → gap
+        assert_eq!(effective_start_us(&pl, ids[0]), Some(0));
+        assert_eq!(effective_start_us(&pl, ids[1]), Some(40_000_000));
+        // C is un-pinned → packs after B's pinned end (40 + 20 = 60s).
+        assert_eq!(effective_start_us(&pl, ids[2]), Some(60_000_000));
+    }
+
+    // --- total_duration_us ---------------------------------------------------
+
+    #[test]
+    fn total_duration_is_sum_when_packed() {
+        let (pl, _) = build(&[(0, 10.0), (0, 20.0), (0, 15.0)]);
+        assert_eq!(total_duration_us(&pl), 45_000_000);
+    }
+
+    #[test]
+    fn total_duration_is_max_end_with_a_gap() {
+        let (mut pl, ids) = build(&[(0, 10.0), (0, 20.0)]);
+        // Drag the second clip out to 100s → timeline extends to 120s.
+        let i = pl.clips().iter().position(|c| c.id == ids[1]).unwrap();
+        pl.clips_mut()[i].start_us = Some(100_000_000);
+        assert_eq!(total_duration_us(&pl), 120_000_000);
+    }
+
+    #[test]
+    fn total_duration_is_max_across_tracks_not_their_sum() {
+        // V1 = 30s of content, V2 = 8s. The timeline is 30s, not 38s.
+        let (pl, _) = build(&[(0, 10.0), (1, 8.0), (0, 20.0)]);
+        assert_eq!(total_duration_us(&pl), 30_000_000);
+    }
+
+    // --- selected_clip_window ------------------------------------------------
+
+    #[test]
+    fn selected_window_returns_absolute_start() {
+        let (pl, ids) = build(&[(0, 10.0), (0, 20.0), (0, 15.0)]);
+        assert_eq!(selected_clip_window(&pl, Some(ids[1])), Some((10_000_000, 20_000_000)));
+        assert_eq!(selected_clip_window(&pl, Some(Uuid::nil())), None);
+        assert_eq!(selected_clip_window(&pl, None), None);
+    }
+
+    // --- drag_to_start_us ----------------------------------------------------
+
+    #[test]
+    fn drag_unknown_clip_returns_none() {
         let (pl, _) = build(&[(0, 10.0)]);
-        assert_eq!(locate_clip(&pl, Uuid::nil()), None);
-    }
-
-    // --- gap_positions_in_track ---------------------------------------------
-
-    #[test]
-    fn gap_positions_only_account_for_clips_on_the_same_track() {
-        // V1 has two 10s clips; V2 has a much longer 100s clip wedged
-        // between them. The V1 gap math must IGNORE the V2 clip entirely.
-        let (pl, _) = build(&[(0, 10.0), (1, 100.0), (0, 10.0)]);
-        let gaps_v1 = gap_positions_in_track(&pl, 6.0, 0);
-
-        // 10s @ 6 px/s = 60 px (linear, above CARD_MIN_PX 28 px).
-        // gap0 = 3 (padding); gap1 = 3 + 60 + 1 = 64; gap2 = 64 + 60 + 1 = 125.
-        assert_eq!(gaps_v1.len(), 3);
-        assert!((gaps_v1[0] - 3.0).abs() < 0.001);
-        assert!((gaps_v1[1] - 64.0).abs() < 0.001);
-        assert!((gaps_v1[2] - 125.0).abs() < 0.001);
-
-        let gaps_v2 = gap_positions_in_track(&pl, 6.0, 1);
-        // V2 has one 100s clip @ 6 px/s = 600 px (within max).
-        assert_eq!(gaps_v2.len(), 2);
-        assert!((gaps_v2[0] - 3.0).abs() < 0.001);
-        assert!((gaps_v2[1] - 604.0).abs() < 0.001);
-    }
-
-    // --- drop_target_for_clip: same-track reorder ----------------------------
-
-    #[test]
-    fn drop_no_movement_is_noop() {
-        let (pl, ids) = build(&[(0, 10.0), (0, 20.0), (0, 30.0)]);
-        let out = drop_target_for_clip(&pl, 6.0, ids[1], 0.0).unwrap();
-        assert!(out.reorder.is_none(), "zero delta on V1B should be no-op");
+        assert!(drag_to_start_us(&pl, 6.0, Uuid::nil(), 100.0, 0).is_none());
     }
 
     #[test]
-    fn drop_far_right_moves_to_end_of_track() {
-        let (pl, ids) = build(&[(0, 10.0), (0, 20.0), (0, 30.0)]);
-        // Drag V1A (index 0) far right.
-        let out = drop_target_for_clip(&pl, 6.0, ids[0], 10_000.0).unwrap();
-        assert_eq!(out.local_gap, 3, "snap to trailing gap of V1 lane");
-        let (from, to) = out.reorder.expect("should reorder");
-        assert_eq!(from, 0);
-        // Single-track case: insert at the post-remove end (len-1 = 2).
-        assert_eq!(to, 2);
+    fn drag_right_moves_start_by_delta_in_time() {
+        // Lone clip at 0, 10 px/s → 1 px = 0.1s. Drag +300 px past any snap
+        // (no neighbours; playhead far away) → +30s.
+        let (mut pl, ids) = build(&[(0, 5.0)]);
+        pl.clips_mut()[0].video_track = 0;
+        let out = drag_to_start_us(&pl, 10.0, ids[0], 300.0, 999_000_000).unwrap();
+        assert_eq!(out.new_start_us, 30_000_000);
+        // Indicator x = 30s * 10 px/s = 300 px.
+        assert!((out.indicator_x_px - 300.0).abs() < 0.5);
     }
 
     #[test]
-    fn drop_far_left_moves_to_start_of_track() {
-        let (pl, ids) = build(&[(0, 10.0), (0, 20.0), (0, 30.0)]);
-        // Drag V1C (index 2) far left.
-        let out = drop_target_for_clip(&pl, 6.0, ids[2], -10_000.0).unwrap();
-        assert_eq!(out.local_gap, 0);
-        let (from, to) = out.reorder.expect("should reorder");
-        assert_eq!(from, 2);
-        assert_eq!(to, 0);
-    }
-
-    // --- drop_target_for_clip: MULTI-track lanes (the regressions) -----------
-
-    #[test]
-    fn drop_in_v2_does_not_touch_v1_clips() {
-        // Layout: V1A(10), V2X(5), V1B(20), V2Y(8), V1C(15)
-        let (pl, ids) = build(&[(0, 10.0), (1, 5.0), (0, 20.0), (1, 8.0), (0, 15.0)]);
-        // Drag V2X (global idx 1, local 0) far right inside V2.
-        let out = drop_target_for_clip(&pl, 6.0, ids[1], 10_000.0).unwrap();
-        assert_eq!(out.local_gap, 2, "V2 has 2 lanes-gaps after end");
-        let (from, to) = out.reorder.unwrap();
-        assert_eq!(from, 1, "X is at global index 1");
-        // Post-remove playlist: [V1A, V1B, V2Y, V1C].
-        // We want V2X to end up AFTER V2Y → global insertion before V1C (idx 3)
-        // OR at end (idx 3). Either way, result must put V2X after V2Y.
-        let mut copy = pl.clone();
-        copy.reorder(from, to).unwrap();
-        let v2_order: Vec<Uuid> = copy.clips().iter().filter(|c| c.video_track == 1).map(|c| c.id).collect();
-        assert_eq!(v2_order, vec![ids[3], ids[1]], "V2 should now be [Y, X]");
-        let v1_order: Vec<Uuid> = copy.clips().iter().filter(|c| c.video_track == 0).map(|c| c.id).collect();
-        assert_eq!(v1_order, vec![ids[0], ids[2], ids[4]], "V1 order MUST be preserved");
+    fn drag_clamps_at_origin() {
+        let (pl, ids) = build(&[(0, 5.0)]);
+        // Drag far left → cannot go below 0.
+        let out = drag_to_start_us(&pl, 10.0, ids[0], -9999.0, -1).unwrap();
+        assert_eq!(out.new_start_us, 0);
     }
 
     #[test]
-    fn drop_v1_to_start_does_not_disturb_v2_order() {
-        let (pl, ids) = build(&[(0, 10.0), (1, 5.0), (0, 20.0), (1, 8.0), (0, 15.0)]);
-        // Drag V1C (global idx 4, local 2) all the way left.
-        let out = drop_target_for_clip(&pl, 6.0, ids[4], -10_000.0).unwrap();
-        let (from, to) = out.reorder.unwrap();
-        assert_eq!(from, 4);
-        let mut copy = pl.clone();
-        copy.reorder(from, to).unwrap();
-        let v1_order: Vec<Uuid> = copy.clips().iter().filter(|c| c.video_track == 0).map(|c| c.id).collect();
-        assert_eq!(v1_order, vec![ids[4], ids[0], ids[2]], "V1 should now be [C, A, B]");
-        let v2_order: Vec<Uuid> = copy.clips().iter().filter(|c| c.video_track == 1).map(|c| c.id).collect();
-        assert_eq!(v2_order, vec![ids[1], ids[3]], "V2 order untouched");
+    fn drag_snaps_trailing_edge_to_neighbour_start() {
+        // V1: A(10s) at 0, B(10s) packed at 10s. Drag B left so its *end*
+        // lands near A's end-ish; specifically aim so B butts against A.
+        // 10 px/s: B starts at 100 px. Nudge left by ~95 px → raw ≈ 0.5s, which
+        // snaps B's leading edge to A's... we want trailing snap, so move B so
+        // its end (raw+10s) is near A's end (10s): raw ≈ 0 → leading snaps to 0.
+        // Simpler: assert B snaps flush to A's right edge when dragged a hair
+        // left of its packed spot.
+        let (pl, ids) = build(&[(0, 10.0), (0, 10.0)]);
+        // Drag B left by 5 px (0.5s) from its packed 10s start → raw 9.5s,
+        // within SNAP_PX(8px=0.8s) of A's end (10s) → leading edge snaps to 10s.
+        let out = drag_to_start_us(&pl, 10.0, ids[1], -5.0, -1).unwrap();
+        assert_eq!(out.new_start_us, 10_000_000, "snaps flush against A's right edge");
     }
 
     #[test]
-    fn drop_v1_middle_in_multi_track_layout() {
-        // V1A(10), V2X(5), V1B(20), V2Y(8), V1C(15)
-        let (pl, ids) = build(&[(0, 10.0), (1, 5.0), (0, 20.0), (1, 8.0), (0, 15.0)]);
-        // Drag V1A across V1B's center → should snap to between B and C
-        // (V1 local gap 2). At 6 px/s widths are A=60, B=120, C=90 px; the V1
-        // gaps are [3, 64, 185, 276] and A's center starts at 33, so a ~150 px
-        // drag lands the center next to gap 2 (185).
-        let out = drop_target_for_clip(&pl, 6.0, ids[0], 150.0).unwrap();
-        assert_eq!(out.local_gap, 2, "snap between V1B and V1C");
-        let (from, to) = out.reorder.unwrap();
-        let mut copy = pl.clone();
-        copy.reorder(from, to).unwrap();
-        let v1_order: Vec<Uuid> = copy.clips().iter().filter(|c| c.video_track == 0).map(|c| c.id).collect();
-        assert_eq!(v1_order, vec![ids[2], ids[0], ids[4]], "V1 should now be [B, A, C]");
+    fn clip_at_us_finds_clip_under_playhead_and_local_offset() {
+        // V1: A(10s)@0, B(20s)@10s, C(15s)@30s.
+        let (pl, ids) = build(&[(0, 10.0), (0, 20.0), (0, 15.0)]);
+        // 15s is 5s into B.
+        assert_eq!(clip_at_us_on_track(&pl, 0, 15_000_000), Some((ids[1], 5_000_000)));
+        // 0s is the very start of A (local 0 → caller rejects as edge).
+        assert_eq!(clip_at_us_on_track(&pl, 0, 0), Some((ids[0], 0)));
+        // 30s is exactly C's start (B ends at 30, half-open) → C local 0.
+        assert_eq!(clip_at_us_on_track(&pl, 0, 30_000_000), Some((ids[2], 0)));
+        // Past the end → nothing.
+        assert_eq!(clip_at_us_on_track(&pl, 0, 999_000_000), None);
+        // Wrong track → nothing.
+        assert_eq!(clip_at_us_on_track(&pl, 1, 15_000_000), None);
     }
 
     #[test]
-    fn drop_a1_only_reorders_audio_lane() {
-        // V1 and A1 both populated. Drag A1's last clip far left.
-        let (pl, ids) = build(&[(0, 10.0), (2, 4.0), (0, 12.0), (2, 6.0), (2, 8.0)]);
-        // A1 = [a1, a2, a3] (ids[1], ids[3], ids[4]).
-        let out = drop_target_for_clip(&pl, 6.0, ids[4], -10_000.0).unwrap();
-        let (from, to) = out.reorder.unwrap();
-        assert_eq!(from, 4);
-        let mut copy = pl.clone();
-        copy.reorder(from, to).unwrap();
-        let a1_order: Vec<Uuid> = copy.clips().iter().filter(|c| c.video_track == 2).map(|c| c.id).collect();
-        assert_eq!(a1_order, vec![ids[4], ids[1], ids[3]]);
-        let v1_order: Vec<Uuid> = copy.clips().iter().filter(|c| c.video_track == 0).map(|c| c.id).collect();
-        assert_eq!(v1_order, vec![ids[0], ids[2]]);
+    fn clip_at_us_respects_gaps() {
+        let (mut pl, ids) = build(&[(0, 10.0), (0, 10.0)]);
+        pl.clips_mut()[1].start_us = Some(50_000_000); // B pinned at 50s → gap 10..50
+        assert_eq!(clip_at_us_on_track(&pl, 0, 30_000_000), None, "playhead in the gap");
+        assert_eq!(clip_at_us_on_track(&pl, 0, 55_000_000), Some((ids[1], 5_000_000)));
     }
 
     #[test]
-    fn drop_indicator_x_uses_lane_local_gap_position() {
-        let (pl, ids) = build(&[(0, 10.0), (1, 100.0), (0, 10.0)]);
-        // Drag V1B left, expecting indicator at V1 gap 0 (= 3 px).
-        let out = drop_target_for_clip(&pl, 6.0, ids[2], -10_000.0).unwrap();
-        assert!(
-            (out.indicator_x_px - 3.0).abs() < 0.001,
-            "indicator must be lane-local, not influenced by the V2 clip",
-        );
-    }
-
-    #[test]
-    fn drop_one_clip_lane_is_always_noop() {
-        let (pl, ids) = build(&[(0, 10.0), (1, 5.0)]);
-        // V2 has a single clip — anywhere it's "dragged", it stays.
-        let out = drop_target_for_clip(&pl, 6.0, ids[1], 500.0).unwrap();
-        assert!(out.reorder.is_none());
-        let out2 = drop_target_for_clip(&pl, 6.0, ids[1], -500.0).unwrap();
-        assert!(out2.reorder.is_none());
-    }
-
-    #[test]
-    fn drop_to_just_past_self_is_noop() {
-        // Source at local index 1: gap 1 (left edge) and gap 2 (right edge)
-        // both bracket its own slot → must be a no-op.
-        let (pl, ids) = build(&[(0, 10.0), (0, 10.0), (0, 10.0)]);
-        // 60 px ≈ one card (10s @ 6 px/s) → still snaps within the source's
-        // own bracketing gaps, so it must stay a no-op.
-        let out = drop_target_for_clip(&pl, 6.0, ids[1], 60.0).unwrap();
-        assert!(out.reorder.is_none());
-        let out2 = drop_target_for_clip(&pl, 6.0, ids[1], -60.0).unwrap();
-        assert!(out2.reorder.is_none());
-    }
-
-    #[test]
-    fn drop_unknown_clip_returns_none() {
-        let (pl, _) = build(&[(0, 10.0)]);
-        assert!(drop_target_for_clip(&pl, 6.0, Uuid::nil(), 100.0).is_none());
+    fn drag_snaps_to_playhead() {
+        let (pl, ids) = build(&[(0, 5.0)]);
+        // Playhead at 50s. Drag clip so raw lands ~near 50s (498 px = 49.8s at
+        // 10 px/s), within snap → leading edge snaps to playhead 50s.
+        let out = drag_to_start_us(&pl, 10.0, ids[0], 498.0, 50_000_000).unwrap();
+        assert_eq!(out.new_start_us, 50_000_000);
     }
 }

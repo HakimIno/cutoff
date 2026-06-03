@@ -32,6 +32,8 @@ component TrackLane inherits Rectangle {
     in property <string> selected-id;
     in property <length> px-per-sec: 6px;
     in property <string> drag-from-id;
+    in property <int> drop-target-index: -1;
+    in property <length> drop-indicator-x: 0px;
     in property <bool> is-audio: false;
     in property <bool> muted: false;
     in property <bool> interactive: true;
@@ -63,32 +65,38 @@ component TrackLane inherits Rectangle {
         background: root.accent-color.with-alpha(0.18);
     }
 
-    HorizontalLayout {
-        padding-left: 6px;
-        padding-right: 6px;
-        padding-top: 4px;
-        padding-bottom: 4px;
-        spacing: 3px;
-        alignment: start;
-        for clip[idx] in root.clips: ClipBlock {
-            data: clip;
-            index: idx;
-            px-per-sec: root.px-per-sec;
-            selected: clip.id == root.selected-id;
-            drag-ghost: root.drag-from-id != "" && clip.id == root.drag-from-id;
-            is-audio: root.is-audio;
-            interactive: root.interactive;
-            accent-color: root.accent-color;
-            clip-clicked(id)      => { root.clip-clicked(id); }
-            remove-clicked(id)    => { root.remove-clicked(id); }
-            drag-started(id)      => { root.drag-started(id); }
-            drag-moved(id, dx)    => { root.drag-moved(id, dx); }
-            drag-released(id, dx) => { root.drag-released(id, dx); }
-            trim-released(id, right, dx) => { root.trim-released(id, right, dx); }
-            request-split(id)     => { root.request-split(id); }
-            reveal-in-finder(id)  => { root.reveal-in-finder(id); }
-            move-to-track(id, t)  => { root.move-to-track(id, t); }
-        }
+    // Clips are positioned by their absolute timeline start so the lane can
+    // hold gaps and freely-dragged cards. `start-secs` is filled per-track by
+    // `sync_tracks`; multiplying by `px-per-sec` aligns each card with the
+    // ruler ticks and gridlines (which share the same origin).
+    for clip[idx] in root.clips: ClipBlock {
+        // While this card is the one being dragged, follow the snapped target
+        // position (computed in Rust) so it glides between valid spots like a
+        // magnetic drag overlay. Otherwise sit at the clip's real start.
+        x: (root.drag-from-id == clip.id && root.drop-target-index >= 0)
+            ? root.drop-indicator-x
+            : clip.start-secs * root.px-per-sec;
+        y: 4px;
+        // Only the dragged card glides; others snap instantly so they don't
+        // lag the ruler while zooming.
+        animate x { duration: root.drag-from-id == clip.id ? 70ms : 0ms; easing: ease-out; }
+        data: clip;
+        index: idx;
+        px-per-sec: root.px-per-sec;
+        selected: clip.id == root.selected-id;
+        drag-ghost: root.drag-from-id != "" && clip.id == root.drag-from-id;
+        is-audio: root.is-audio;
+        interactive: root.interactive;
+        accent-color: root.accent-color;
+        clip-clicked(id)      => { root.clip-clicked(id); }
+        remove-clicked(id)    => { root.remove-clicked(id); }
+        drag-started(id)      => { root.drag-started(id); }
+        drag-moved(id, dx)    => { root.drag-moved(id, dx); }
+        drag-released(id, dx) => { root.drag-released(id, dx); }
+        trim-released(id, right, dx) => { root.trim-released(id, right, dx); }
+        request-split(id)     => { root.request-split(id); }
+        reveal-in-finder(id)  => { root.reveal-in-finder(id); }
+        move-to-track(id, t)  => { root.move-to-track(id, t); }
     }
 }
 
@@ -465,6 +473,8 @@ export component Timeline inherits Rectangle {
                                     selected-id: root.selected-id;
                                     px-per-sec: root.px-per-sec;
                                     drag-from-id: root.drag-from-id;
+                                    drop-target-index: root.drop-target-index;
+                                    drop-indicator-x: root.drop-indicator-x;
                                     clip-clicked(id)      => { root.clip-clicked(id); }
                                     remove-clicked(id)    => { root.remove-clicked(id); }
                                     drag-started(id)      => { root.drag-started(id); }

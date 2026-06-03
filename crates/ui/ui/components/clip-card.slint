@@ -66,17 +66,21 @@ export component ClipBlock inherits Rectangle {
     width: max(self.px-per-sec * root.data.duration-secs, 44px);
     height: 56px;
     border-radius: 4px;
-    border-width: root.selected ? 2px : 1px;
-    border-color: root.is-audio
-        ? (root.selected ? #ffffff : (drag-area.has-hover ? #ffffffee : #ffffffcc))
-        : (root.selected
-            ? root.accent-color.brighter(0.55)
-            : (drag-area.has-hover ? root.accent-color.with-alpha(0.7) : root.accent-color.with-alpha(0.45)));
+    // The card being dragged is lifted (bright 2px ring) rather than dimmed,
+    // so it reads as a floating overlay following the cursor.
+    border-width: root.selected || root.drag-ghost ? 2px : 1px;
+    border-color: root.drag-ghost
+        ? #ffffff
+        : (root.is-audio
+            ? (root.selected ? #ffffff : (drag-area.has-hover ? #ffffffee : #ffffffcc))
+            : (root.selected
+                ? root.accent-color.brighter(0.55)
+                : (drag-area.has-hover ? root.accent-color.with-alpha(0.7) : root.accent-color.with-alpha(0.45))));
     background: root.is-audio
         ? (drag-area.has-hover ? #48a85e : #52b86a)
         : (drag-area.has-hover ? #20242d : #171920);
     clip: true;
-    opacity: root.drag-ghost ? 0.4 : (root.data.muted ? 0.6 : 1.0);
+    opacity: root.data.muted ? 0.6 : 1.0;
     animate background { duration: 120ms; }
     animate border-color { duration: 120ms; }
     animate opacity { duration: 120ms; }
@@ -223,6 +227,18 @@ export component ClipBlock inherits Rectangle {
                 overflow: elide;
             }
         }
+    }
+
+    // Left-edge seam: where two clips butt together (the two halves of a
+    // split, or clips snapped flush) this line makes the boundary read as two
+    // separate blocks instead of one continuous strip. Declared above the
+    // thumbnail/waveform layers so it stays visible.
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: 1px;
+        height: 100%;
+        background: #000000aa;
     }
 
     // ── Layer 3 (TOP): interactive controls. These TouchAreas are declared

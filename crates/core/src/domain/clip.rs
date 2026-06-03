@@ -45,6 +45,13 @@ pub struct Clip {
     /// Defaults to `None` so v1 projects load and pack exactly as before.
     #[serde(default)]
     pub start_us: Option<i64>,
+    /// The clip whose extracted thumbnails / waveform on disk this clip reuses.
+    /// A freshly imported clip generates its own assets (so `None` ⇒ use
+    /// `self.id`); a split half keeps pointing at the original source clip's
+    /// assets via this field, since both halves share the same media and the
+    /// same `thumbs/{id}` and `waveforms/{id}.bin` directories.
+    #[serde(default)]
+    pub origin_id: Option<ClipId>,
     /// Opacity (0.0 to 1.0)
     #[serde(default = "default_opacity")]
     pub opacity: f32,
@@ -126,6 +133,7 @@ impl Clip {
             waveform_path: None,
             video_track: 0,
             start_us: None,
+            origin_id: None,
             opacity: 1.0,
             scale: 1.0,
             position_x: 0,
@@ -167,6 +175,12 @@ impl Clip {
             saturation: self.saturation,
             color_grading: self.color_grading,
         }
+    }
+
+    /// Id under which this clip's thumbnails / waveform are stored on disk.
+    /// Survives splits so both halves resolve the original source's assets.
+    pub fn asset_id(&self) -> ClipId {
+        self.origin_id.unwrap_or(self.id)
     }
 
     pub fn is_compatible_with(&self, other: &Clip) -> bool {

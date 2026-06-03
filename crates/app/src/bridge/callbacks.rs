@@ -50,18 +50,34 @@ pub fn install(window: &AppWindow, cmd_tx: mpsc::Sender<Command>, state: BridgeS
     {
         let weak = window.as_weak();
         let pl = state.playlist.clone();
+        let pv = state.preview.clone();
         let zoom = state.zoom.clone();
         window.on_drag_moved(move |id, dx| {
-            on_drag_moved(weak.clone(), pl.clone(), zoom.clone(), id, dx)
+            on_drag_moved(weak.clone(), pl.clone(), pv.clone(), zoom.clone(), id, dx)
         });
     }
     {
+        let tx = cmd_tx.clone();
         let weak = window.as_weak();
         let pl = state.playlist.clone();
+        let pv = state.preview.clone();
         let zoom = state.zoom.clone();
         let undo = state.undo.clone();
+        let tracks = state.tracks.clone();
+        let proj = state.project.clone();
         window.on_drag_released(move |id, dx| {
-            on_drag_released(weak.clone(), pl.clone(), zoom.clone(), undo.clone(), id, dx)
+            on_drag_released(
+                weak.clone(),
+                tx.clone(),
+                pl.clone(),
+                pv.clone(),
+                tracks.clone(),
+                proj.clone(),
+                zoom.clone(),
+                undo.clone(),
+                id,
+                dx,
+            )
         });
     }
     {
@@ -688,6 +704,7 @@ fn on_drag_started(weak: Weak<AppWindow>, id: SharedString) {
 fn on_drag_moved(
     weak: Weak<AppWindow>,
     playlist: SharedPlaylist,
+    preview: SharedPreview,
     zoom: SharedZoom,
     id: SharedString,
     delta_px: f32,
@@ -696,19 +713,27 @@ fn on_drag_moved(
         return;
     };
     let z = *zoom.lock().expect("zoom mutex poisoned");
+    let playhead = preview.lock().map(|p| p.playhead_us).unwrap_or(0);
     let pl = playlist.lock().expect("playlist mutex poisoned");
-    let Some(out) = timeline_view::drop_target_for_clip(&pl, z, uuid, delta_px) else {
+    let Some(out) = timeline_view::drag_to_start_us(&pl, z, uuid, delta_px, playhead) else {
         return;
     };
     if let Some(window) = weak.upgrade() {
-        window.set_drop_target_index(out.local_gap as i32);
+        // Any non-negative value makes the drop indicator visible; the exact
+        // index no longer matters in the absolute model.
+        window.set_drop_target_index(0);
         window.set_drop_indicator_x(out.indicator_x_px);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn on_drag_released(
     weak: Weak<AppWindow>,
+    cmd_tx: mpsc::Sender<Command>,
     playlist: SharedPlaylist,
+    preview: SharedPreview,
+    tracks: super::SharedTracks,
+    project: super::SharedProject,
     zoom: SharedZoom,
     undo: SharedUndo,
     id: SharedString,
@@ -722,18 +747,35 @@ fn on_drag_released(
         return;
     };
     let z = *zoom.lock().expect("zoom mutex poisoned");
-    let mut pl = playlist.lock().expect("playlist mutex poisoned");
-    let Some(out) = timeline_view::drop_target_for_clip(&pl, z, uuid, delta_px) else {
-        return;
+    let playhead = preview.lock().map(|p| p.playhead_us).unwrap_or(0);
+
+    // Resolve the snapped target, then bail if nothing actually moved.
+    let new_start = {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        let Some(out) = timeline_view::drag_to_start_us(&pl, z, uuid, delta_px, playhead) else {
+            return;
+        };
+        if timeline_view::effective_start_us(&pl, uuid) == Some(out.new_start_us) {
+            return;
+        }
+        out.new_start_us
     };
-    let Some((from, to)) = out.reorder else { return };
-    checkpoint(&undo, &pl);
-    if let Err(err) = pl.reorder(from, to) {
-        tracing::warn!(error = %err, "reorder failed");
-        return;
+
+    {
+        let mut pl = playlist.lock().expect("playlist mutex poisoned");
+        checkpoint(&undo, &pl);
+        if let Some(clip) = pl.clips_mut().iter_mut().find(|c| c.id == uuid) {
+            clip.start_us = Some(new_start);
+        }
     }
-    models::sync_clips(&window, &pl);
-    timeline_view::refresh_ruler(&window, &pl, z);
+
+    refresh_tracks_ui(&window, &playlist, &tracks, &project);
+    {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        models::sync_clips(&window, &pl);
+        timeline_view::refresh_ruler(&window, &pl, z);
+    }
+    sync_preview(&playlist, &tracks, &project, &cmd_tx);
 }
 
 /// Refresh the multi-track project from the (mutable) playlist + track-state,
@@ -1126,10 +1168,26 @@ fn on_split(
     zoom: SharedZoom,
     undo: SharedUndo,
 ) {
-    let (clip_id, local_us) = {
+    // Split at the current (timeline-absolute) playhead. Resolve *which* clip
+    // the playhead is over on the active track — this is what "Split at
+    // playhead" means, and it works regardless of the clip's position because
+    // `clip_at_us_on_track` returns the clip-local offset directly.
+    let (track, abs_playhead) = {
         let pv = preview.lock().expect("preview mutex poisoned");
-        let Some(id) = pv.clip_id else { return };
-        (id, pv.playhead_us)
+        let Some(sel) = pv.clip_id else { return };
+        let abs = pv.playhead_us;
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        let Some(track) = pl.clips().iter().find(|c| c.id == sel).map(|c| c.video_track) else {
+            return;
+        };
+        (track, abs)
+    };
+    let (clip_id, local_us) = {
+        let pl = playlist.lock().expect("playlist mutex poisoned");
+        match timeline_view::clip_at_us_on_track(&pl, track, abs_playhead) {
+            Some(pair) => pair,
+            None => return,
+        }
     };
     if local_us <= 0 {
         return;

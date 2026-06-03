@@ -357,7 +357,9 @@ export component AppWindow inherits Window {
                             drag-released(id, dx) => { root.drag-released(id, dx); }
                             trim-released(id, right, dx) => { root.trim-released(id, right, dx); }
                             request-split(id) => {
-                                root.clip-selected(id);
+                                // Split at the current playhead — do NOT reselect
+                                // the clip first, or selection would reseek the
+                                // playhead to the clip's start and split at 0.
                                 root.split();
                             }
                             reveal-in-finder(id) => { root.reveal-in-finder(id); }
