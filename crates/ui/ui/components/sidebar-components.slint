@@ -12,14 +12,14 @@ export component TabButton inherits Rectangle {
 
     VerticalLayout {
         alignment: center;
-        spacing: 6px;
+        spacing: 2px;
         
         if root.has-icon : HorizontalLayout {
             alignment: center;
             Image {
                 source: root.icon;
-                width: 20px;
-                height: 20px;
+                width: 16px;
+                height: 16px;
                 colorize: root.active ? white : (ta.has-hover ? Palette.text : Palette.text-muted);
                 animate colorize { duration: 150ms; easing: ease-out; }
             }
@@ -30,7 +30,7 @@ export component TabButton inherits Rectangle {
             Text {
                 text: root.text;
                 color: root.active ? white : (ta.has-hover ? Palette.text : Palette.text-muted);
-                font-size: 11px;
+                font-size: 10px;
                 font-weight: root.active ? 600 : 500;
                 animate color { duration: 150ms; easing: ease-out; }
             }
