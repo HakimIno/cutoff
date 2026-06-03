@@ -1,0 +1,190 @@
+import { Palette } from "../styles/palette.slint";
+import { Theme } from "../styles/theme.slint";
+
+export component TabButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    in property <image> icon;
+    in property <bool> has-icon: false;
+    callback clicked();
+
+    horizontal-stretch: 1;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 6px;
+        
+        if root.has-icon : HorizontalLayout {
+            alignment: center;
+            Image {
+                source: root.icon;
+                width: 20px;
+                height: 20px;
+                colorize: root.active ? white : (ta.has-hover ? Palette.text : Palette.text-muted);
+                animate colorize { duration: 150ms; easing: ease-out; }
+            }
+        }
+        
+        HorizontalLayout {
+            alignment: center;
+            Text {
+                text: root.text;
+                color: root.active ? white : (ta.has-hover ? Palette.text : Palette.text-muted);
+                font-size: 11px;
+                font-weight: root.active ? 600 : 500;
+                animate color { duration: 150ms; easing: ease-out; }
+            }
+        }
+    }
+
+    // Animated indicator growing from the center
+    Rectangle {
+        y: parent.height - 2px;
+        x: (parent.width - self.width) / 2;
+        width: root.active ? 80% : 0%;
+        height: 2px;
+        background: white;
+        border-radius: 1px;
+        opacity: root.active ? 1.0 : 0.0;
+        animate width { duration: 250ms; easing: ease-in-out; }
+        animate opacity { duration: 200ms; easing: ease-in-out; }
+    }
+
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+export component SubTabButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked();
+
+    horizontal-stretch: 1;
+    border-radius: Theme.radius-sm;
+    
+    // Smooth background animation for active and hover states
+    background: root.active ? Palette.surface : (ta.has-hover ? Palette.surface-2 : transparent);
+    animate background { duration: 150ms; easing: ease-in-out; }
+
+    Text {
+        text: root.text;
+        color: root.active ? white : (ta.has-hover ? Palette.text : Palette.text-muted);
+        font-size: 10px;
+        font-weight: 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        animate color { duration: 150ms; easing: ease-out; }
+    }
+
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+export component TextPresetCard inherits Rectangle {
+    in property <string> label;
+    in property <string> preview-text;
+    in property <length> font-size;
+    in property <int> font-weight;
+    
+    height: 64px;
+    border-radius: Theme.radius-sm;
+    background: ta.has-hover ? Palette.surface-3 : Palette.surface;
+    border-width: 1px;
+    border-color: ta.has-hover ? Palette.border-bright : Palette.border;
+    animate background { duration: 100ms; }
+    
+    ta := TouchArea { mouse-cursor: pointer; }
+    
+    HorizontalLayout {
+        padding: 12px;
+        alignment: space-between;
+        
+        Text {
+            text: root.label;
+            color: Palette.text-muted;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+        }
+        
+        Text {
+            text: root.preview-text;
+            color: Palette.text;
+            font-size: root.font-size;
+            font-weight: root.font-weight;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component ShapePresetCard inherits Rectangle {
+    in property <string> label;
+    in property <bool> is-circle: false;
+    
+    height: 80px;
+    border-radius: Theme.radius-sm;
+    background: ta.has-hover ? Palette.surface-3 : Palette.surface;
+    border-width: 1px;
+    border-color: ta.has-hover ? Palette.border-bright : Palette.border;
+    animate background { duration: 100ms; }
+    
+    ta := TouchArea { mouse-cursor: pointer; }
+    
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+        alignment: center;
+        
+        Rectangle {
+            width: 32px; height: 32px;
+            border-radius: root.is-circle ? 16px : 4px;
+            background: Palette.text;
+        }
+        
+        Text {
+            text: root.label;
+            color: Palette.text;
+            font-size: Theme.font-xs;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+export component TransitionPresetCard inherits Rectangle {
+    in property <string> label;
+    
+    height: 56px;
+    border-radius: Theme.radius-sm;
+    background: ta.has-hover ? Palette.surface-3 : Palette.surface;
+    border-width: 1px;
+    border-color: ta.has-hover ? Palette.border-bright : Palette.border;
+    animate background { duration: 100ms; }
+    
+    ta := TouchArea { mouse-cursor: pointer; }
+    
+    HorizontalLayout {
+        padding: 12px;
+        spacing: 12px;
+        
+        // Mock Transition Icon
+        Rectangle {
+            width: 32px; height: 32px;
+            border-radius: 4px;
+            background: Palette.surface-2;
+            border-width: 1px;
+            border-color: Palette.border;
+            Text {
+                text: "▶";
+                color: Palette.text-muted;
+                font-size: 14px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+        
+        Text {
+            text: root.label;
+            color: Palette.text;
+            font-size: Theme.font-sm;
+            font-weight: 500;
+            vertical-alignment: center;
+        }
+    }
+}

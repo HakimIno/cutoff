@@ -2,6 +2,8 @@ import { Palette } from "../styles/palette.slint";
 import { Theme } from "../styles/theme.slint";
 import { ClipData } from "clip-card.slint";
 import { ScrollView } from "std-widgets.slint";
+import { MediaLibraryCard } from "media-library-card.slint";
+import { TabButton, SubTabButton, TextPresetCard, ShapePresetCard, TransitionPresetCard } from "sidebar-components.slint";
 
 component StatRow inherits Rectangle {
     in property <string> label;
@@ -45,7 +47,7 @@ component Divider inherits Rectangle {
 component PrimaryButton inherits Rectangle {
     in property <string> label;
     callback clicked();
-    height: 32px;
+    height: 36px;
     border-radius: Theme.radius-sm;
     border-width: 1px;
     border-color: ta.has-hover ? Palette.border-bright : Palette.border;
@@ -64,99 +66,6 @@ component PrimaryButton inherits Rectangle {
     }
 }
 
-component MediaLibraryCard inherits Rectangle {
-    in property <ClipData> data;
-    callback clicked();
-    callback remove();
-
-    height: 52px;
-    border-radius: Theme.radius-sm;
-    background: ta.has-hover ? Palette.surface-2 : Palette.surface;
-    border-width: 1px;
-    border-color: ta.has-hover ? Palette.border-bright : Palette.border;
-    animate background { duration: 100ms; }
-    animate border-color { duration: 100ms; }
-
-    ta := TouchArea { clicked => { root.clicked(); } }
-
-    HorizontalLayout {
-        padding: 3px;
-        spacing: Theme.spacing-md;
-
-        // Thumbnail
-        Rectangle {
-            width: 64px;
-            height: 44px;
-            background: black;
-            border-radius: Theme.radius-sm;
-            clip: true;
-
-            for thumb[i] in root.data.thumbnails: Image {
-                source: thumb;
-                width: 100%;
-                height: 100%;
-                image-fit: cover;
-            }
-
-            // Duration badge overlay at bottom right
-            Rectangle {
-                x: parent.width - self.width - 2px;
-                y: parent.height - self.height - 2px;
-                width: self.preferred-width + 4px;
-                height: 12px;
-                background: #000000aa;
-                border-radius: 2px;
-                Text {
-                    text: root.data.duration;
-                    color: white;
-                    font-size: 8px;
-                    font-weight: 700;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-            }
-        }
-
-        // Title + Quick Metadata
-        VerticalLayout {
-            alignment: center;
-            spacing: 2px;
-            horizontal-stretch: 1;
-            Text {
-                text: root.data.name;
-                color: Palette.text;
-                font-size: Theme.font-xs;
-                font-weight: 600;
-                overflow: elide;
-            }
-            Text {
-                text: root.data.resolution;
-                color: Palette.text-dim;
-                font-size: 9px;
-            }
-        }
-
-        // Delete button
-        if ta.has-hover : Rectangle {
-            width: 16px;
-            height: 16px;
-            y: (parent.height - self.height) / 2;
-            border-radius: Theme.radius-sm;
-            background: del-ta.has-hover ? Palette.danger : transparent;
-            Text {
-                text: "×";
-                color: Palette.text;
-                font-size: Theme.font-sm;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-            }
-            del-ta := TouchArea {
-                clicked => { root.remove(); }
-            }
-        }
-    }
-}
-
 export component Sidebar inherits Rectangle {
     in property <[ClipData]> clips;
     in property <int> clip-count;
@@ -168,8 +77,11 @@ export component Sidebar inherits Rectangle {
     callback clip-selected(string);
     callback remove-clicked(string);
 
-    width: 240px;
+    width: 300px;
     background: Palette.surface;
+
+    property <int> active-tab: 0;
+    property <int> active-subtab: 0;
 
     Rectangle {
         x: parent.width - 1px;
@@ -181,64 +93,166 @@ export component Sidebar inherits Rectangle {
         spacing: 0px;
         alignment: start;
 
-        // Primary action
+        // Top Navigation Tabs
         Rectangle {
-            height: 56px;
+            height: 64px;
+            background: Palette.surface;
             HorizontalLayout {
-                padding: Theme.spacing-lg;
-                PrimaryButton {
-                    label: "+  Import";
-                    clicked => { root.add-clicked(); }
+                padding-left: 8px; padding-right: 8px;
+                TabButton {
+                    text: "Assets"; has-icon: true; icon: @image-url("../../../../assets/solar/folder.svg");
+                    active: root.active-tab == 0; clicked => { root.active-tab = 0; }
+                }
+                TabButton {
+                    text: "Text"; has-icon: true; icon: @image-url("../../../../assets/solar/text.svg");
+                    active: root.active-tab == 1; clicked => { root.active-tab = 1; }
+                }
+                TabButton {
+                    text: "Shapes"; has-icon: true; icon: @image-url("../../../../assets/solar/shapes.svg");
+                    active: root.active-tab == 2; clicked => { root.active-tab = 2; }
+                }
+                TabButton {
+                    text: "Transitions"; has-icon: true; icon: @image-url("../../../../assets/solar/transitions.svg");
+                    active: root.active-tab == 3; clicked => { root.active-tab = 3; }
                 }
             }
         }
-
+        
         Divider {}
 
-        // Library Title
-        Rectangle {
-            height: 28px;
-            HorizontalLayout {
-                padding-left: Theme.spacing-lg;
-                padding-right: Theme.spacing-lg;
-                alignment: space-between;
-                Text {
-                    text: "Assets";
-                    color: Palette.text;
-                    font-size: Theme.font-sm;
-                    font-weight: 600;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: root.clips.length + (root.clips.length == 1 ? " item" : " items");
-                    color: Palette.text-dim;
-                    font-size: Theme.font-xs;
-                    vertical-alignment: center;
+        // TAB 0: Assets View
+        if root.active-tab == 0 : VerticalLayout {
+            // Filter Sub Tabs
+            Rectangle {
+                height: 48px;
+                background: Palette.surface-2;
+                
+                Rectangle {
+                    x: 12px; y: 8px;
+                    width: parent.width - 24px;
+                    height: 32px;
+                    border-radius: Theme.radius-sm;
+                    background: Palette.surface-3;
+                    
+                    HorizontalLayout {
+                        padding: 2px;
+                        spacing: 2px;
+                        SubTabButton { text: "All (" + root.clips.length + ")"; active: root.active-subtab == 0; clicked => { root.active-subtab = 0; } }
+                        SubTabButton { text: "Video (" + root.clips.length + ")"; active: root.active-subtab == 1; clicked => { root.active-subtab = 1; } }
+                        SubTabButton { text: "Audio (0)"; active: root.active-subtab == 2; clicked => { root.active-subtab = 2; } }
+                        SubTabButton { text: "Image (0)"; active: root.active-subtab == 3; clicked => { root.active-subtab = 3; } }
+                    }
                 }
             }
-        }
 
-        // Scrollable loaded clips
-        Rectangle {
-            vertical-stretch: 1;
+            // Import Button
+            Rectangle {
+                height: 60px;
+                background: Palette.surface-2;
+                HorizontalLayout {
+                    padding-left: 12px; padding-right: 12px; padding-bottom: 12px; padding-top: 4px;
+                    PrimaryButton {
+                        label: "+  Import";
+                        clicked => { root.add-clicked(); }
+                    }
+                }
+            }
 
-            VerticalLayout {
-                padding-left: Theme.spacing-md;
-                padding-right: Theme.spacing-md;
-                padding-bottom: Theme.spacing-md;
+            // Scrollable loaded clips
+            Rectangle {
+                vertical-stretch: 1;
+                background: Palette.surface-2;
 
-                ScrollView {
-                    viewport-height: root.clips.length * 56px;
-                    VerticalLayout {
-                        spacing: 4px;
-                        alignment: start;
-                        for clip[idx] in root.clips: MediaLibraryCard {
-                            data: clip;
-                            clicked => { root.clip-selected(clip.id); }
-                            remove => { root.remove-clicked(clip.id); }
+                VerticalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-bottom: 12px;
+
+                    ScrollView {
+                        viewport-height: root.clips.length * 168px;
+                        VerticalLayout {
+                            spacing: 12px;
+                            alignment: start;
+                            for clip[idx] in root.clips: MediaLibraryCard {
+                                data: clip;
+                                clicked => { root.clip-selected(clip.id); }
+                                remove => { root.remove-clicked(clip.id); }
+                            }
                         }
                     }
                 }
+            }
+        }
+
+        // TAB 1: Text
+        if root.active-tab == 1 : Rectangle {
+            vertical-stretch: 1;
+            background: Palette.surface-2;
+            
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+                alignment: start;
+                
+                Text {
+                    text: "Add Text";
+                    color: Palette.text;
+                    font-size: Theme.font-sm;
+                    font-weight: 600;
+                }
+                
+                TextPresetCard { label: "Heading"; preview-text: "Heading"; font-size: 24px; font-weight: 800; }
+                TextPresetCard { label: "Subtitle"; preview-text: "Subtitle"; font-size: 18px; font-weight: 600; }
+                TextPresetCard { label: "Body text"; preview-text: "Body text"; font-size: 14px; font-weight: 400; }
+            }
+        }
+
+        // TAB 2: Shapes
+        if root.active-tab == 2 : Rectangle {
+            vertical-stretch: 1;
+            background: Palette.surface-2;
+            
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+                alignment: start;
+                
+                Text {
+                    text: "Basic Shapes";
+                    color: Palette.text;
+                    font-size: Theme.font-sm;
+                    font-weight: 600;
+                }
+                
+                HorizontalLayout {
+                    spacing: 12px;
+                    ShapePresetCard { label: "Rectangle"; is-circle: false; }
+                    ShapePresetCard { label: "Circle"; is-circle: true; }
+                }
+            }
+        }
+
+        // TAB 3: Transitions
+        if root.active-tab == 3 : Rectangle {
+            vertical-stretch: 1;
+            background: Palette.surface-2;
+            
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+                alignment: start;
+                
+                Text {
+                    text: "Video Transitions";
+                    color: Palette.text;
+                    font-size: Theme.font-sm;
+                    font-weight: 600;
+                }
+                
+                TransitionPresetCard { label: "Cross Dissolve"; }
+                TransitionPresetCard { label: "Dip to Black"; }
+                TransitionPresetCard { label: "Dip to White"; }
+                TransitionPresetCard { label: "Wipe Left"; }
             }
         }
 

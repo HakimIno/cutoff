@@ -1,0 +1,113 @@
+import { Palette } from "../styles/palette.slint";
+import { Theme } from "../styles/theme.slint";
+import { ClipData } from "clip-card.slint";
+
+export component MediaLibraryCard inherits Rectangle {
+    in property <ClipData> data;
+    callback clicked();
+    callback remove();
+
+    height: 156px;
+    border-radius: Theme.radius;
+    background: ta.has-hover ? Palette.surface-2 : Palette.surface;
+    border-width: 1px;
+    border-color: ta.has-hover ? Palette.border-bright : Palette.border;
+    clip: true;
+    
+    animate background { duration: 100ms; }
+    animate border-color { duration: 100ms; }
+
+    ta := TouchArea { clicked => { root.clicked(); } }
+
+    VerticalLayout {
+        // Top: Thumbnail
+        Rectangle {
+            height: 96px;
+            background: black;
+            clip: true;
+
+            for thumb[i] in root.data.thumbnails: Image {
+                source: thumb;
+                width: 100%;
+                height: 100%;
+                image-fit: cover;
+            }
+
+            // "VIDEO" badge top left
+            Rectangle {
+                x: 8px; y: 8px;
+                Text {
+                    text: "VIDEO";
+                    color: white;
+                    font-size: 10px;
+                    font-weight: 700;
+                    letter-spacing: 0.5px;
+                }
+            }
+        }
+
+        // Bottom: Metadata
+        Rectangle {
+            background: ta.has-hover ? Palette.surface-2 : Palette.surface;
+            animate background { duration: 100ms; }
+            
+            VerticalLayout {
+                padding: 10px;
+                spacing: 4px;
+                alignment: start;
+                Text {
+                    text: root.data.name;
+                    color: Palette.text;
+                    font-size: Theme.font-sm;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+                Text {
+                    // Using placeholder for file size since it's not in ClipData yet
+                    text: "25.6 MB • " + root.data.resolution;
+                    color: Palette.text-dim;
+                    font-size: 11px;
+                }
+            }
+
+            // Duration badge bottom right
+            Rectangle {
+                x: parent.width - self.width - 8px;
+                y: (parent.height - self.height) / 2;
+                width: self.preferred-width + 8px;
+                height: 20px;
+                background: #000000aa;
+                border-radius: 4px;
+                Text {
+                    text: root.data.duration;
+                    color: white;
+                    font-size: 11px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+    
+    // Delete button (Top Right)
+    if ta.has-hover : Rectangle {
+        width: 24px; height: 24px;
+        x: parent.width - self.width - 6px;
+        y: 6px;
+        border-radius: Theme.radius-sm;
+        background: del-ta.has-hover ? Palette.danger : #000000aa;
+        Text {
+            text: "×";
+            color: white;
+            font-size: Theme.font-md;
+            font-weight: 600;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            y: -1px; // Visual alignment fix for the cross character
+        }
+        del-ta := TouchArea {
+            clicked => { root.remove(); }
+        }
+    }
+}
